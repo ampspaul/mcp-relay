@@ -1,0 +1,179 @@
+# =============================================================================
+# remote_servers.example.yaml — MCP Relay remote server configuration example
+# =============================================================================
+#
+# USAGE:
+#   Copy this file to remote_servers.yaml and fill in your real values.
+#   remote_servers.yaml is git-ignored (FR-16) — never commit secrets!
+#
+# SECRET REFERENCES (FR-02):
+#   Any string value may use the special syntax  secret::<name>  to have the
+#   relay resolve the secret at startup via the configured SECRET_BACKEND.
+#
+#   Examples:
+#     api_key: "secret::my-api-key"          # looks up secret named "my-api-key"
+#     token:   "secret::github-pat"          # looks up secret named "github-pat"
+#
+#   Set the SECRET_BACKEND environment variable to choose a backend:
+#     SECRET_BACKEND=env     (default) — env var MY_API_KEY / MY-API-KEY → MY_API_KEY
+#     SECRET_BACKEND=gcp     — GCP Secret Manager  (requires: pip install mcp-relay[gcp])
+#     SECRET_BACKEND=aws     — AWS Secrets Manager (requires: pip install mcp-relay[aws])
+#     SECRET_BACKEND=azure   — Azure Key Vault      (requires: pip install mcp-relay[azure])
+#     SECRET_BACKEND=vault   — HashiCorp Vault      (requires: pip install mcp-relay[vault])
+#     SECRET_BACKEND=plain   — value used as-is (for testing only, never production!)
+#
+# AUTHENTICATION PATTERNS (FR-15):
+#   The relay supports seven authentication patterns shown below.
+#
+# SECURITY FLAGS:
+#   sanitize_input:       Strip/escape dangerous characters in tool arguments before forwarding
+#   sanitize_output:      Strip/escape dangerous content in tool results before returning
+#   pii_scan_enabled:     Scan inputs and outputs for PII patterns; redact or reject on match
+#   injection_detection:  Detect prompt-injection attempts in inputs; reject on match
+#   rate_limit_rpm:       Max requests per minute from any single client to this server (0 = off)
+# =============================================================================
+
+servers:
+
+  # ---------------------------------------------------------------------------
+  # Pattern 1: No authentication — public server (FR-15, pattern 1)
+  # ---------------------------------------------------------------------------
+  - name: public-weather-server
+    description: "Public weather MCP server — no credentials required"
+    url: "https://weather.example.com/mcp"
+    auth:
+      type: none          # No authentication; server is publicly accessible
+    # Security flags (all optional; defaults are false / 0)
+    sanitize_input: true
+    sanitize_output: true
+    pii_scan_enabled: false
+    injection_detection: false
+    rate_limit_rpm: 60    # Limit to 60 requests per minute
+
+  # ---------------------------------------------------------------------------
+  # Pattern 2: API key passed as a query parameter (FR-15, pattern 2)
+  # ---------------------------------------------------------------------------
+  - name: maps-server-query-param
+    description: "Mapping service that expects ?api_key=<TOKEN> in the URL"
+    url: "https://maps.example.com/mcp"
+    auth:
+      type: query_param
+      param_name: api_key           # Name of the query-string parameter
+      # Use a secret reference so the real key is never stored here (FR-02)
+      param_value: "secret::maps-api-key"
+    sanitize_input: true
+    sanitize_output: false
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit_rpm: 120
+
+  # ---------------------------------------------------------------------------
+  # Pattern 3: API key embedded in the URL path (FR-15, pattern 3)
+  # ---------------------------------------------------------------------------
+  - name: translation-server-path-key
+    description: "Translation service with the API key baked into the URL path"
+    # The placeholder {api_key} is replaced by the resolved secret value at startup
+    url: "https://translate.example.com/{api_key}/mcp"
+    auth:
+      type: url_path
+      path_param: api_key           # Name of the {placeholder} in the URL above
+      path_value: "secret::translate-api-key"
+    sanitize_input: true
+    sanitize_output: true
+    pii_scan_enabled: true
+    injection_detection: false
+    rate_limit_rpm: 0     # No rate limit
+
+  # ---------------------------------------------------------------------------
+  # Pattern 4: API key sent as a custom HTTP header (FR-15, pattern 4)
+  # ---------------------------------------------------------------------------
+  - name: search-server-header-key
+    description: "Enterprise search MCP server using a custom X-API-Key header"
+    url: "https://search.example.com/mcp"
+    auth:
+      type: header
+      header_name: "X-API-Key"      # The HTTP header name to send
+      header_value: "secret::search-api-key"
+    sanitize_input: true
+    sanitize_output: true
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit_rpm: 200
+
+  # ---------------------------------------------------------------------------
+  # Pattern 5: Bearer token in the Authorization header (FR-15, pattern 5)
+  # ---------------------------------------------------------------------------
+  - name: github-mcp-server
+    description: "GitHub MCP server authenticated with a Personal Access Token"
+    url: "https://api.github.com/mcp"
+    auth:
+      type: bearer
+      # The relay sends:  Authorization: Bearer <resolved token>
+      token: "secret::github-pat"
+    sanitize_input: true
+    sanitize_output: false
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit_rpm: 30    # GitHub has strict rate limits; keep relay conservative
+
+  # ---------------------------------------------------------------------------
+  # Pattern 6: OAuth2 client credentials flow (FR-15, pattern 6)
+  # ---------------------------------------------------------------------------
+  - name: enterprise-erp-server
+    description: >
+      ERP system using OAuth2 client credentials grant.
+      The relay fetches and caches a Bearer token automatically,
+      refreshing before expiry.
+    url: "https://erp.example.com/mcp"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://auth.example.com/oauth/token"
+      client_id: "secret::erp-client-id"
+      client_secret: "secret::erp-client-secret"
+      scope: "mcp.read mcp.write"    # Space-separated OAuth scopes (optional)
+      # Optional: audience claim required by some IdPs (e.g. Auth0)
+      audience: "https://erp.example.com"
+    sanitize_input: true
+    sanitize_output: true
+    pii_scan_enabled: true
+    injection_detection: true
+    rate_limit_rpm: 60
+
+  # ---------------------------------------------------------------------------
+  # Pattern 7: All security controls enabled (FR-15, pattern 7)
+  # ---------------------------------------------------------------------------
+  - name: high-security-finance-server
+    description: >
+      High-security financial data MCP server.
+      Demonstrates all available security controls enabled simultaneously.
+      Uses bearer auth plus every protection flag at maximum.
+    url: "https://finance.example.com/mcp"
+    auth:
+      type: bearer
+      token: "secret::finance-bearer-token"
+    # Security flags — ALL enabled
+    sanitize_input: true          # Sanitize arguments sent to the remote server
+    sanitize_output: true         # Sanitize results returned to the LLM client
+    pii_scan_enabled: true        # Redact PII (SSNs, credit card numbers, emails, etc.)
+    injection_detection: true     # Block prompt-injection attempts
+    rate_limit_rpm: 10            # Very conservative rate limit for sensitive data
+
+# =============================================================================
+# NOTES
+# =============================================================================
+#
+# 1. The `name` field must be unique across all entries — it is used as the
+#    MCP tool namespace exposed by the relay.
+#
+# 2. Secret references (secret::<name>) are resolved once at startup.
+#    If a secret cannot be resolved, the relay will refuse to start.
+#
+# 3. Add this file to your .gitignore to avoid committing secrets:
+#       echo "remote_servers.yaml" >> .gitignore
+#
+# 4. Install the appropriate extras for your secret backend:
+#       pip install mcp-relay[gcp]    # Google Cloud Secret Manager
+#       pip install mcp-relay[aws]    # AWS Secrets Manager
+#       pip install mcp-relay[azure]  # Azure Key Vault
+#       pip install mcp-relay[vault]  # HashiCorp Vault
+# =============================================================================
