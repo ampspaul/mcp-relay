@@ -1,0 +1,53 @@
+# docker-compose.yml — MCP Gateway service
+#
+# Example .env file (copy to .env and fill in real values):
+# ─────────────────────────────────────────────────────────
+# # Network / server
+# PORT=8080
+#
+# # Secret-resolver backend: env | gcp | aws | azure | vault
+# SECRET_BACKEND=env
+#
+# # GCP Secret Manager (only required when SECRET_BACKEND=gcp)
+# GCP_PROJECT_ID=my-gcp-project
+#
+# # AWS Secrets Manager (only required when SECRET_BACKEND=aws)
+# AWS_REGION=us-east-1
+# AWS_ACCESS_KEY_ID=AKIA...
+# AWS_SECRET_ACCESS_KEY=...
+#
+# # Azure Key Vault (only required when SECRET_BACKEND=azure)
+# AZURE_VAULT_URL=https://my-vault.vault.azure.net/
+# AZURE_CLIENT_ID=...
+# AZURE_CLIENT_SECRET=...
+# AZURE_TENANT_ID=...
+#
+# # HashiCorp Vault (only required when SECRET_BACKEND=vault)
+# VAULT_ADDR=https://vault.example.com:8200
+# VAULT_TOKEN=s.xxxxx
+#
+# # Inline env secrets referenced in remote_servers.yaml
+# MY_API_KEY=super-secret-key
+# ─────────────────────────────────────────────────────────
+
+services:
+  mcp-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+
+    # Load environment variables from .env (create from example block above)
+    env_file:
+      - .env
+
+    # Bind-mount the servers configuration into the container
+    volumes:
+      - ./remote_servers.yaml:/app/config/remote_servers.yaml:ro
+
+    # Map host port 8080 → container port 8080
+    ports:
+      - "8080:8080"
+
+    # Restart policy for production deployments
+    restart: unless-stopped
