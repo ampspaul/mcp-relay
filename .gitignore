@@ -1,0 +1,118 @@
+# ============================================================
+# MCP Relay — .gitignore
+# ============================================================
+
+# -----------------------------------------------------------
+# SECURITY: Never commit live secrets/config files (FR-16)
+# -----------------------------------------------------------
+remote_servers.yaml
+secrets.yaml
+.env
+.env.*
+!.env.example
+
+# -----------------------------------------------------------
+# Python
+# -----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+.installed.cfg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Packaging / distribution
+*.tar.gz
+*.whl
+
+# -----------------------------------------------------------
+# Testing & Coverage
+# -----------------------------------------------------------
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py,cover
+htmlcov/
+.tox/
+.nox/
+.cache/
+.pytest_cache/
+nosetests.xml
+test-results/
+junit.xml
+
+# -----------------------------------------------------------
+# Type checking
+# -----------------------------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# -----------------------------------------------------------
+# Linting
+# -----------------------------------------------------------
+.ruff_cache/
+
+# -----------------------------------------------------------
+# IDEs and editors
+# -----------------------------------------------------------
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# -----------------------------------------------------------
+# Logs and runtime artifacts
+# -----------------------------------------------------------
+*.log
+logs/
+*.pid
+*.sock
+
+# -----------------------------------------------------------
+# Cloud / infrastructure credentials
+# -----------------------------------------------------------
+# GCP service account keys
+*.json
+!pyproject.toml
+# AWS credentials
+.aws/
+
+# -----------------------------------------------------------
+# Jupyter notebooks (checkpoints)
+# -----------------------------------------------------------
+.ipynb_checkpoints/
+
+# -----------------------------------------------------------
+# Docker
+# -----------------------------------------------------------
+*.dockerignore
+docker-compose.override.yml
