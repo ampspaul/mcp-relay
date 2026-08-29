@@ -78,7 +78,7 @@ dev = [
 ]
 
 [project.scripts]
-mcp-relay = "src.main:main"
+mcp-relay = "mcp_relay.main:build_app"
 
 [project.urls]
 Homepage = "https://github.com/example/mcp-relay"
@@ -86,7 +86,7 @@ Repository = "https://github.com/example/mcp-relay"
 Issues = "https://github.com/example/mcp-relay/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/mcp_relay"]
 
 [tool.ruff]
 line-length = 100

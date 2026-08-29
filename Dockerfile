@@ -16,8 +16,7 @@ COPY src/ ./src/
 
 # Install the project and its core dependencies into a prefix directory
 # (no cloud SDKs — those are optional extras installed at runtime if needed)
-RUN pip install --no-cache-dir --prefix=/install ".[dev]" || \
-    pip install --no-cache-dir --prefix=/install .
+RUN pip install --no-cache-dir --prefix=/install .
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 FROM python:3.12-slim AS runtime
@@ -44,7 +43,7 @@ USER appuser
 # PORT can be overridden at runtime; default is 8080
 ENV PORT=8080
 
-EXPOSE ${PORT}
+EXPOSE 8080
 
-# Entrypoint: run the MCP gateway module
-CMD ["python", "-m", "src.mcp_gateway.main"]
+# Entrypoint: run the MCP relay module
+CMD ["python", "-m", "mcp_relay.main"]
