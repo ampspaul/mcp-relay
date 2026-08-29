@@ -1,6 +1,6 @@
 # mcp-relay
 
-A lightweight, config-driven MCP gateway that proxies tool calls to remote MCP servers with built-in authentication, secret resolution, and a layered security pipeline.
+A config-driven MCP gateway that proxies tool calls to remote MCP servers with built-in authentication, secret resolution, and a layered security pipeline.
 
 ```
 LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Server A
@@ -13,13 +13,61 @@ LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Serve
 
 ## Features
 
-- **Config-driven** — add/remove upstream servers by editing `remote_servers.yaml`; no code changes
+- **Config-driven** — add/remove upstream servers by editing `config/remote_servers.yaml`; no code changes
 - **Six auth patterns** — none, query param, URL path, custom header, bearer token, OAuth2 client credentials
 - **Pluggable secrets** — env vars (default), GCP Secret Manager, AWS Secrets Manager, Azure Key Vault, HashiCorp Vault
-- **Security pipeline** — input/output sanitization, PII redaction (regex + optional Ollama LLM), prompt-injection detection (13 patterns × 8 categories)
-- **Rate limiting** — per-server RPM cap with a token-bucket implementation
-- **Token caching** — OAuth2 tokens and resolved credentials are cached in-memory (5-min TTL) to avoid repeated secret lookups
-- **Non-root container** — multi-stage Dockerfile; runs as uid 1000
+- **Security pipeline** — input/output sanitization, PII redaction (regex + optional Ollama LLM), prompt-injection detection
+- **Rate limiting** — per-server daily quota with response-signal detection
+- **Token caching** — OAuth2 tokens and resolved credentials cached in-memory (5-min TTL)
+- **Non-root container** — multi-stage Dockerfile, runs as uid 1000
+
+---
+
+## Project structure
+
+```
+mcp-relay/
+├── src/mcp_relay/          # application code
+│   ├── main.py             # Starlette app entrypoint
+│   ├── server.py           # FastMCP instance
+│   ├── auth/               # credential resolution and caching
+│   │   ├── resolver.py     # resolve_connection() — picks auth strategy
+│   │   ├── oauth2.py       # OAuth2 client credentials + token cache
+│   │   ├── credential_cache.py
+│   │   └── secret_resolver.py  # secret:: token resolution backends
+│   ├── registry/           # tool discovery and proxy registration
+│   │   ├── server_registry.py  # load config, call tools, register proxies
+│   │   ├── tool_discovery.py   # list_tools() per server
+│   │   └── proxy_builder.py    # typed async proxy callables
+│   ├── transport/          # MCP session management
+│   │   └── session.py      # open_session() — SSE and StreamableHTTP
+│   ├── security/           # input/output protection
+│   │   ├── secret_redactor.py
+│   │   ├── pii_redactor.py     # regex + optional Ollama LLM
+│   │   └── prompt_injection.py
+│   ├── resilience/
+│   │   └── rate_limiter.py
+│   ├── config/             # typed config models and YAML loader
+│   ├── api/                # HTTP endpoints (health, admin)
+│   ├── middleware/         # Starlette middleware stubs
+│   ├── observability/      # logging, metrics, tracing stubs
+│   ├── exceptions/
+│   └── models/
+├── config/
+│   ├── remote_servers.yaml     # upstream server definitions (git-ignored)
+│   ├── security_policies.yaml
+│   └── logging.yaml
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── fixtures/
+├── infra/gcp/              # Terraform — Cloud Run deployment
+├── scripts/                # run_local.sh, smoke_test.py, validate_config.py
+├── docs/                   # architecture, security, configuration guides
+├── Makefile
+├── Dockerfile
+└── pyproject.toml
+```
 
 ---
 
@@ -28,20 +76,17 @@ LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Serve
 ### Docker Compose (recommended)
 
 ```bash
-# 1. Clone the repo
+# 1. Clone
 git clone https://github.com/ampspaul/mcp-relay.git
 cd mcp-relay
 
-# 2. Create your server config
-cp remote_servers.example.yaml remote_servers.yaml
-# Edit remote_servers.yaml — add your upstream MCP servers
+# 2. Configure upstream servers
+cp config/remote_servers.yaml config/remote_servers.local.yaml
+# Edit config/remote_servers.yaml — add your upstream MCP servers
 
-# 3. Create the env file
-cat > .env <<'EOF'
-PORT=8080
-SECRET_BACKEND=env
-MY_API_KEY=your-actual-key-here
-EOF
+# 3. Set environment
+cp .env.example .env
+# Edit .env with your secrets
 
 # 4. Start
 docker compose up -d
@@ -51,99 +96,114 @@ curl http://localhost:8080/health
 # → {"status":"ok","service":"mcp-relay"}
 ```
 
-### Run locally (no Docker)
+### Run locally
 
 ```bash
 pip install -e .
-cp remote_servers.example.yaml remote_servers.yaml
-# Edit remote_servers.yaml
+# Edit config/remote_servers.yaml
 
 export SECRET_BACKEND=env
 export MY_API_KEY=your-actual-key-here
-python -m src.mcp_gateway.main
+python -m mcp_relay.main
 ```
 
-The SSE endpoint is available at `http://localhost:8080/sse`.
+Or use the Makefile:
+
+```bash
+make dev    # install with dev extras
+make run    # start the relay
+```
+
+The SSE endpoint is at `http://localhost:8080/sse`.
 
 ---
 
-## remote_servers.yaml reference
+## config/remote_servers.yaml reference
 
-Copy `remote_servers.example.yaml` to `remote_servers.yaml` (this file is git-ignored — never commit secrets).
+`config/remote_servers.yaml` is git-ignored — never commit secrets. The file
+defines all upstream MCP servers the relay connects to at startup.
 
 ### Top-level structure
 
 ```yaml
 servers:
   - name: my-server          # unique identifier — used as MCP tool namespace
-    description: "..."       # human-readable description
-    url: "https://..."       # upstream MCP server SSE URL
+    description: "..."
+    url: "https://..."        # upstream MCP server URL
+    transport: sse            # sse (default) or streamable_http
+    enabled: true
+    tool_prefix: ""           # prefix added to all tool names from this server
     auth:
-      type: <auth-type>      # see Authentication section
-      ...                    # auth-type-specific fields
-    # Security flags (all optional, default false / 0)
-    sanitize_input: true
-    sanitize_output: true
+      type: <auth-type>       # see Authentication section below
+      ...
+    # Security flags (all optional, default false)
+    sanitize_input: false
+    sanitize_output: false
+    redact_pii: false
     pii_scan_enabled: false
+    pii_scan_model: ""
     injection_detection: false
-    rate_limit_rpm: 0
+    # Rate limiting (optional)
+    rate_limit:
+      requests_per_day: 0     # 0 = disabled
+      response_signal_keys: []
 ```
 
 ### Authentication patterns
 
-| Type | Description |
-|------|-------------|
+| `type` | Description |
+|--------|-------------|
 | `none` | No auth — public server |
-| `query_param` | Appends `?<param_name>=<value>` to the URL |
-| `url_path` | Substitutes `{placeholder}` in the URL path |
-| `header` | Sends a custom HTTP header |
-| `bearer` | Sends `Authorization: Bearer <token>` |
+| `api_key_query` | Appends `?<param_name>=<value>` to the URL |
+| `api_key_url_path` | Substitutes `{placeholder}` in the URL path |
+| `api_key_header` | Sends a custom HTTP header |
+| `bearer` | Sends `Authorization: Bearer <value>` |
 | `oauth2_client_credentials` | Fetches and caches a token from `token_url` |
 
-#### Pattern 1 — No auth
+#### No auth
 
 ```yaml
 auth:
   type: none
 ```
 
-#### Pattern 2 — Query param
+#### API key — query parameter
 
 ```yaml
 auth:
-  type: query_param
-  param_name: api_key
-  param_value: "secret::my-api-key"
+  type: api_key_query
+  param_name: api_key          # query param name (default: apikey)
+  value: "secret::my-api-key"
 ```
 
-#### Pattern 3 — URL path
+#### API key — URL path
 
 ```yaml
 url: "https://example.com/{api_key}/mcp"
 auth:
-  type: url_path
-  path_param: api_key
-  path_value: "secret::my-api-key"
+  type: api_key_url_path
+  placeholder: "{api_key}"     # placeholder in the URL (default: {api_key})
+  value: "secret::my-api-key"
 ```
 
-#### Pattern 4 — Custom header
+#### API key — custom header
 
 ```yaml
 auth:
-  type: header
-  header_name: "X-API-Key"
-  header_value: "secret::my-api-key"
+  type: api_key_header
+  header_name: "X-API-Key"    # header name (default: X-Api-Key)
+  value: "secret::my-api-key"
 ```
 
-#### Pattern 5 — Bearer token
+#### Bearer token
 
 ```yaml
 auth:
   type: bearer
-  token: "secret::my-bearer-token"
+  value: "secret::my-bearer-token"
 ```
 
-#### Pattern 6 — OAuth2 client credentials
+#### OAuth2 client credentials
 
 ```yaml
 auth:
@@ -151,149 +211,132 @@ auth:
   token_url: "https://auth.example.com/oauth/token"
   client_id: "secret::my-client-id"
   client_secret: "secret::my-client-secret"
-  scope: "read write"       # optional
-  audience: "https://..."   # optional — required by some IdPs (e.g. Auth0)
+  scope: "read write"           # optional
+  audience: "https://..."       # optional — required by some IdPs (e.g. Auth0)
 ```
 
 ### Security flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `sanitize_input` | bool | `false` | Strip/escape dangerous characters in tool arguments before forwarding |
-| `sanitize_output` | bool | `false` | Strip/escape dangerous content in tool results before returning to the LLM |
-| `pii_scan_enabled` | bool | `false` | Scan inputs and outputs for PII patterns; redact on match |
-| `pii_scan_model` | string | — | Ollama model to use for LLM-assisted PII scanning (requires `pii_scan_enabled: true` and `OLLAMA_URL` env var) |
-| `injection_detection` | bool | `false` | Detect and block prompt-injection attempts in tool arguments |
-| `rate_limit_rpm` | int | `0` | Max requests per minute from any client to this server (`0` = disabled) |
+| `sanitize_input` | bool | `false` | Redact PII from tool arguments before forwarding |
+| `sanitize_output` | bool | `false` | Redact API keys from tool results |
+| `redact_pii` | bool | `false` | Apply regex PII redaction to tool results |
+| `pii_scan_enabled` | bool | `false` | Enable LLM-assisted PII scan (requires `pii_scan_model` + `OLLAMA_URL`) |
+| `pii_scan_model` | string | — | Ollama model name, e.g. `llama3.2` |
+| `injection_detection` | bool | `false` | Block prompt-injection attempts in tool results |
 
 ---
 
 ## Secret resolution
 
-Use the `secret::<name>` syntax anywhere in `remote_servers.yaml` to reference a secret without embedding it in the file:
+Use `secret::<name>` anywhere in `config/remote_servers.yaml`:
 
 ```yaml
-token: "secret::my-bearer-token"
+value: "secret::my-api-key"
 ```
 
 Set `SECRET_BACKEND` to choose the resolver:
 
-| Backend | Value | Notes |
-|---------|-------|-------|
-| Environment variable | `env` (default) | Secret name is uppercased and hyphens → underscores: `my-key` → `MY_KEY` |
+| Backend | `SECRET_BACKEND` | Notes |
+|---------|-----------------|-------|
+| Environment variable | `env` (default) | `my-api-key` → env var `MY_API_KEY` |
 | GCP Secret Manager | `gcp` | Requires `GCP_PROJECT_ID` and `pip install mcp-relay[gcp]` |
-| AWS Secrets Manager | `aws` | Requires `AWS_REGION` + credentials and `pip install mcp-relay[aws]` |
-| Azure Key Vault | `azure` | Requires `AZURE_VAULT_URL` + identity env vars and `pip install mcp-relay[azure]` |
+| AWS Secrets Manager | `aws` | Requires `AWS_REGION` and `pip install mcp-relay[aws]` |
+| Azure Key Vault | `azure` | Requires `AZURE_KEYVAULT_URL` and `pip install mcp-relay[azure]` |
 | HashiCorp Vault | `vault` | Requires `VAULT_ADDR` + `VAULT_TOKEN` and `pip install mcp-relay[vault]` |
-| Plain (testing only) | `plain` | Value is used as-is — never use in production |
-
-Install only the extras you need:
+| Plain (testing only) | `plain` | Returns the name as-is — never use in production |
 
 ```bash
-pip install mcp-relay[gcp]      # GCP Secret Manager
-pip install mcp-relay[aws]      # AWS Secrets Manager
-pip install mcp-relay[azure]    # Azure Key Vault
-pip install mcp-relay[vault]    # HashiCorp Vault
+pip install mcp-relay[gcp]          # GCP Secret Manager
+pip install mcp-relay[aws]          # AWS Secrets Manager
+pip install mcp-relay[azure]        # Azure Key Vault
+pip install mcp-relay[vault]        # HashiCorp Vault
 pip install mcp-relay[all-secrets]  # all backends
 ```
+
+Secret resolution lives in `src/mcp_relay/auth/secret_resolver.py`.
 
 ---
 
 ## Security pipeline
 
-Every inbound tool call and outbound tool result passes through this pipeline:
+Each tool call passes through these layers (all opt-in per server):
 
 ```
 Tool call arguments
       │
       ▼
-[1] Input sanitization  (sanitize_input: true)
-      │   • Strip null bytes, control characters
-      │   • Escape HTML/script tags
-      │   • Remove shell metacharacters
+[1] Input sanitization     (sanitize_input: true)
+      │   PII redaction applied to string arguments
       ▼
-[2] Prompt-injection detection  (injection_detection: true)
-      │   • 13 regex patterns across 8 attack categories
-      │   • Raises ToolError and blocks the call on match
-      ▼
-[3] PII scan — input  (pii_scan_enabled: true)
-      │   • Layer 1: regex patterns (emails, SSNs, credit cards, phone numbers, IPs)
-      │   • Layer 2: Ollama LLM scan (if pii_scan_model + OLLAMA_URL set)
-      │   • Layer 3: regex fallback if LLM unavailable
-      │   • Matched values are redacted to [REDACTED]
-      ▼
-[4] Forward to remote MCP server
+[2] Forward to remote MCP server
       │
       ▼
-[5] PII scan — output  (pii_scan_enabled: true)
-      │   • Same three-layer pipeline applied to the tool result
+[3] Secret redaction       (sanitize_output: true)
+      │   API key patterns scrubbed from tool result text
       ▼
-[6] Output sanitization  (sanitize_output: true)
-      │
+[4] PII redaction — regex  (redact_pii: true)
+      │   Emails, SSNs, credit cards, phone numbers
+      ▼
+[5] PII redaction — LLM    (pii_scan_enabled: true + pii_scan_model set)
+      │   Ollama model scan; falls back to regex on timeout/error
+      ▼
+[6] Prompt-injection check (injection_detection: true)
+      │   12 regex patterns; blocks and discards result on match
       ▼
 Tool result returned to LLM client
 ```
 
 ### Prompt-injection detection
 
-13 patterns across 8 attack categories are applied when `injection_detection: true`:
+Patterns in `src/mcp_relay/security/prompt_injection.py` cover:
 
-| Category | Example patterns |
-|----------|-----------------|
-| Instruction override | `ignore all previous instructions`, `disregard your system prompt` |
-| Role hijacking | `you are now`, `act as`, `pretend you are` |
-| Jailbreak | `DAN mode`, `developer mode`, `unrestricted mode` |
-| Context escape | `\n\nHuman:`, `###SYSTEM`, XML/tag injection |
-| Data exfiltration | `repeat everything above`, `output your instructions` |
-| Indirect injection | Patterns typical in web-scraped or document content |
-| Encoding evasion | Base64, hex, Unicode homoglyph sequences |
-| Multi-step manipulation | Chained instruction patterns across turns |
+| Category | Example |
+|----------|---------|
+| Instruction override | `ignore all previous instructions` |
+| Context reset | `forget everything`, `disregard your system prompt` |
+| Persona hijack | `act as`, `pretend to be`, `roleplay as` |
+| System prompt reveal | `show your instructions`, `repeat your initial prompt` |
+| Data exfiltration | `send all data to`, `leak credentials to` |
+| Safety bypass | `bypass your safety filters`, `jailbreak` |
 
-Enable per server based on risk:
+Enable selectively — only on servers returning unstructured or user-influenced content:
 
 ```yaml
-# High-risk: unstructured web content, user-supplied text
-injection_detection: true
-
-# Low-risk: typed API parameters from a controlled client
-injection_detection: false
+injection_detection: true   # scraped web content, user-supplied data
+injection_detection: false  # typed API parameters from a controlled client
 ```
 
 ### PII redaction (Ollama — optional)
 
-By default PII scanning uses regex patterns only. To add an LLM-assisted scan layer:
-
-1. Deploy [Ollama](https://ollama.com/) on a GPU instance
+1. Deploy [Ollama](https://ollama.com/) and pull a model: `ollama pull llama3.2`
 2. Set `OLLAMA_URL=http://your-ollama-host:11434`
-3. Pull your model: `ollama pull llama3.2`
-4. Enable in `remote_servers.yaml`:
+3. Enable in `config/remote_servers.yaml`:
 
 ```yaml
 pii_scan_enabled: true
 pii_scan_model: "llama3.2"
 ```
 
-If the Ollama call fails or times out, the pipeline falls back to regex automatically — no requests are dropped.
+If Ollama is unreachable or times out, the pipeline falls back to regex — no requests are dropped.
 
 ---
 
 ## Environment variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `PORT` | No | `8080` | Port the relay listens on |
-| `SECRET_BACKEND` | No | `env` | Secret resolution backend |
-| `GCP_PROJECT_ID` | If `SECRET_BACKEND=gcp` | — | GCP project containing secrets |
-| `AWS_REGION` | If `SECRET_BACKEND=aws` | — | AWS region for Secrets Manager |
-| `AWS_ACCESS_KEY_ID` | If `SECRET_BACKEND=aws` | — | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | If `SECRET_BACKEND=aws` | — | AWS secret key |
-| `AZURE_VAULT_URL` | If `SECRET_BACKEND=azure` | — | Azure Key Vault URL |
-| `AZURE_CLIENT_ID` | If `SECRET_BACKEND=azure` | — | Azure app client ID |
-| `AZURE_CLIENT_SECRET` | If `SECRET_BACKEND=azure` | — | Azure app client secret |
-| `AZURE_TENANT_ID` | If `SECRET_BACKEND=azure` | — | Azure tenant ID |
-| `VAULT_ADDR` | If `SECRET_BACKEND=vault` | — | HashiCorp Vault address |
-| `VAULT_TOKEN` | If `SECRET_BACKEND=vault` | — | HashiCorp Vault token |
-| `OLLAMA_URL` | If `pii_scan_model` set | — | Ollama API base URL |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `8080` | Port the relay listens on |
+| `SECRET_BACKEND` | `env` | Secret resolution backend |
+| `GCP_PROJECT_ID` | — | Required when `SECRET_BACKEND=gcp` |
+| `AWS_REGION` | — | Required when `SECRET_BACKEND=aws` |
+| `AZURE_KEYVAULT_URL` | — | Required when `SECRET_BACKEND=azure` |
+| `VAULT_ADDR` | — | Required when `SECRET_BACKEND=vault` |
+| `VAULT_TOKEN` | — | Required when `SECRET_BACKEND=vault` |
+| `OLLAMA_URL` | `http://localhost:11434` | Required when `pii_scan_model` is set |
+
+Copy `.env.example` to `.env` for a full reference.
 
 ---
 
@@ -301,7 +344,7 @@ If the Ollama call fails or times out, the pipeline falls back to regex automati
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health probe — returns `{"status":"ok","service":"mcp-relay"}` |
+| `GET` | `/health` | Health probe — `{"status":"ok","service":"mcp-relay"}` |
 | `GET` | `/sse` | MCP SSE transport — connect your LLM client here |
 
 ---
@@ -309,8 +352,6 @@ If the Ollama call fails or times out, the pipeline falls back to regex automati
 ## Connecting an LLM client
 
 ### Claude Desktop / Claude Code
-
-Add to your MCP config:
 
 ```json
 {
@@ -323,7 +364,7 @@ Add to your MCP config:
 }
 ```
 
-### LangChain / custom client
+### Python client
 
 ```python
 from mcp import ClientSession
@@ -341,21 +382,27 @@ async with sse_client("http://localhost:8080/sse") as (read, write):
 
 ### GCP Cloud Run
 
-```bash
-# Build and push via Cloud Build
-gcloud builds submit \
-  --config=deploy/gcp/cloudbuild.yaml \
-  --substitutions="_IMAGE=us-central1-docker.pkg.dev/YOUR_PROJECT/YOUR_REPO/mcp-relay:v1" \
-  --project=YOUR_PROJECT
+Terraform in `infra/gcp/`:
 
-# Mount remote_servers.yaml via a Secret Manager secret or Cloud Run volume mount
+```bash
+cd infra/gcp
+terraform init
+terraform apply -var="project_id=YOUR_PROJECT"
+```
+
+Or build and push manually:
+
+```bash
+make docker-build
+docker tag mcp-relay gcr.io/YOUR_PROJECT/mcp-relay:v1
+docker push gcr.io/YOUR_PROJECT/mcp-relay:v1
 ```
 
 ### AWS ECS / Fargate
 
 ```bash
-docker build -t mcp-relay:v1 .
-docker tag mcp-relay:v1 YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
+make docker-build
+docker tag mcp-relay YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
 docker push YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
 # Deploy via ECS task definition with SECRET_BACKEND=aws
 ```
@@ -366,7 +413,7 @@ docker push YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
 az acr build --registry YOUR_ACR --image mcp-relay:v1 .
 az containerapp create \
   --name mcp-relay \
-  --env-vars SECRET_BACKEND=azure AZURE_VAULT_URL=https://... \
+  --env-vars SECRET_BACKEND=azure AZURE_KEYVAULT_URL=https://... \
   --image YOUR_ACR.azurecr.io/mcp-relay:v1
 ```
 
@@ -375,35 +422,35 @@ az containerapp create \
 ## Development
 
 ```bash
-# Install with dev extras
+make dev        # install with dev extras
+make lint       # ruff + mypy
+make test       # pytest
+make run        # start locally
+make docker-build
+make docker-run
+```
+
+Manual equivalents:
+
+```bash
 pip install -e ".[dev]"
-
-# Lint
-ruff check src/
-
-# Type check
+ruff check src/ tests/
 mypy src/
-
-# Tests
-pytest
-
-# Pre-commit hooks
-pre-commit install
+pytest tests/
 ```
 
 ---
 
 ## Adding a custom secret backend
 
-Implement the `resolve_secret_refs` function in `src/secret_resolver.py`:
+Add a new `elif` branch in `src/mcp_relay/auth/secret_resolver.py`:
 
 ```python
-async def resolve_secret_refs(obj: dict) -> dict:
-    """Recursively resolve secret::<name> references in a config dict."""
-    ...
+elif backend == "mybackend":
+    return await _resolve_mybackend(name)
 ```
 
-The function receives the raw `auth` dict from `remote_servers.yaml` and must return the same dict with all `secret::<name>` strings replaced by their resolved values.
+Then implement `_resolve_mybackend(name: str) -> str` in the same file following the pattern of the existing backends (`_resolve_gcp`, `_resolve_aws`, etc.).
 
 ---
 
