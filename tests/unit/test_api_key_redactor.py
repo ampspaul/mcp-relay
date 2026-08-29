@@ -1,6 +1,6 @@
-"""Tests for security/secret_redactor.py"""
+"""Tests for security/api_key_redactor.py"""
 
-from src.mcp_relay.security.secret_redactor import redact
+from src.mcp_relay.security.api_key_redactor import redact
 
 
 def test_redacts_api_key_with_equals():

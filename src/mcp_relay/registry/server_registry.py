@@ -11,11 +11,11 @@ from typing import Any
 import anyio
 import yaml
 
-from ..config.loader import load_security_policies
+from ..config.loader import load_security_policies, validate_servers
 from ..observability import metrics
 from ..resilience import rate_limiter
 from ..resilience.circuit_breaker import CircuitOpenError, get_circuit_breaker
-from ..security import pii_redactor, prompt_injection, secret_redactor
+from ..security import api_key_redactor, pii_redactor, prompt_injection
 from ..transport.session import safe_exc_msg
 from ..transport.session_pool import _pool
 from .proxy_builder import build
@@ -80,7 +80,6 @@ async def call_tool(server_cfg: dict, tool_name: str, arguments: dict) -> Any:
     t0 = time.perf_counter()
 
     try:
-        await rate_limiter.check(server_cfg)
         if server_cfg.get("sanitize_input"):
             arguments = pii_redactor.sanitize_args(arguments)
 
@@ -89,6 +88,10 @@ async def call_tool(server_cfg: dict, tool_name: str, arguments: dict) -> Any:
         circuit = get_circuit_breaker(name, cb_cfg)
 
         async def _upstream():
+            # Rate limit check is intentionally inside _upstream so the quota
+            # is only consumed when the circuit breaker actually allows the
+            # call through.  If the circuit is OPEN, this coroutine never runs.
+            await rate_limiter.check(server_cfg)
             return await _pool.call_tool(server_cfg, tool_name, arguments)
 
         try:
@@ -117,7 +120,7 @@ async def call_tool(server_cfg: dict, tool_name: str, arguments: dict) -> Any:
             error_text = "unknown error"
             if result.content and hasattr(result.content[0], "text"):
                 error_text = result.content[0].text
-            safe_text = secret_redactor.redact(error_text)
+            safe_text = api_key_redactor.redact(error_text)
             logger.error(
                 "[registry] %s: tool=%s returned isError=True: %s", name, tool_name, safe_text[:200]
             )
@@ -131,7 +134,7 @@ async def call_tool(server_cfg: dict, tool_name: str, arguments: dict) -> Any:
         if hasattr(first, "text"):
             raw = first.text
             if server_cfg.get("sanitize_output"):
-                raw = secret_redactor.redact(raw)
+                raw = api_key_redactor.redact(raw)
             if server_cfg.get("redact_pii"):
                 raw = pii_redactor.redact(raw)
             if server_cfg.get("pii_scan_enabled", False) and (
@@ -159,6 +162,7 @@ async def register_all(mcp: Any) -> int:
     global _default_timeout, _default_cb_config
 
     configs = await _load_servers()
+    validate_servers(configs)
     _server_configs.clear()
     _server_configs.extend(configs)
 

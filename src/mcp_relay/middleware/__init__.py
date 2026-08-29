@@ -1,1 +1,1 @@
-"""Starlette middleware components for authentication, authorization, and observability."""
+"""Starlette middleware components for authentication and observability."""

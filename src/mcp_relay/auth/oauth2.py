@@ -15,7 +15,7 @@ _oauth2_cache: dict[tuple[str, str], tuple[str, float]] = {}
 async def fetch_token(server_name: str, auth: dict) -> str:
     token_url: str = auth["token_url"]
     client_id: str = auth["client_id"]
-    cache_key = (token_url, client_id)
+    cache_key = (token_url, client_id, auth.get("scope", ""))
 
     if cache_key in _oauth2_cache:
         token, expires_at = _oauth2_cache[cache_key]

@@ -48,11 +48,11 @@ mcp-relay/
 │   ├── transport/          # MCP session management
 │   │   └── session.py      # open_session() — SSE and StreamableHTTP
 │   ├── security/           # input/output protection
-│   │   ├── secret_redactor.py
+│   │   ├── api_key_redactor.py # redacts api_key patterns from tool output
 │   │   ├── pii_redactor.py     # regex + optional Ollama LLM
 │   │   └── prompt_injection.py
 │   ├── resilience/
-│   │   ├── rate_limiter.py
+│   │   ├── rate_limiter.py         # per-server daily quota (increment-then-check, atomic)
 │   │   ├── state_backend.py        # pluggable backend interface (memory / Redis)
 │   │   └── backends/
 │   │       ├── memory.py           # default — in-process, resets on restart
@@ -307,13 +307,13 @@ Tool call arguments
       │
       ▼
 [1] Input sanitization     (sanitize_input: true)
-      │   PII redaction applied to string arguments
+      │   PII redaction applied to string arguments before forwarding
       ▼
 [2] Forward to remote MCP server
       │
       ▼
-[3] Secret redaction       (sanitize_output: true)
-      │   API key patterns scrubbed from tool result text
+[3] API key redaction      (sanitize_output: true)
+      │   api_key patterns scrubbed from tool result text
       ▼
 [4] PII redaction — regex  (redact_pii: true)
       │   Emails, SSNs, credit cards, phone numbers
@@ -508,6 +508,8 @@ servers:
 
 When the circuit is open, the LLM receives a `CircuitOpenError` message explaining when to retry. The relay logs a warning and increments the `circuit_open_total` metric. Both `asyncio.TimeoutError` (from the per-call timeout) and transport errors count toward the failure threshold.
 
+> **Single-worker limitation:** Circuit breaker state is held in-process memory. With multiple uvicorn workers or multiple container replicas, each process has its own independent circuit — a tripped breaker on one worker does not protect the others. For consistent protection, run with a single worker per container and scale via replicas.
+
 Current circuit breaker state per server is visible in `GET /registry` under `circuit_breaker`:
 
 ```json
@@ -692,11 +694,11 @@ Copy `.env.example` to `.env` for a full reference.
 | Method | Path | Auth-exempt | Description |
 |--------|------|-------------|-------------|
 | `GET` | `/health` | Yes | Relay health + per-upstream status — `ok` or `degraded` |
-| `GET` | `/metrics` | Yes | In-memory metrics snapshot — counters, gauges, histograms |
+| `GET` | `/metrics` | No | In-memory metrics snapshot — counters, gauges, histograms |
 | `GET` | `/registry` | No | Server and tool inventory — available tools, blocked tools, per-server counts |
 | `GET` | `/sse` | No | MCP SSE transport — connect your LLM client here |
 
-"Auth-exempt" means the endpoint is reachable without a bearer token even when `inbound_auth.type: bearer` is configured, so load-balancer probes and monitoring systems always succeed.
+Only `/health` is auth-exempt when `inbound_auth.type: bearer` is configured, so load-balancer probes always succeed. `/metrics` requires a valid token because it exposes tool names, call counts, and error rates that can be used to profile the deployment.
 
 ### /health response
 

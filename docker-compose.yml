@@ -43,7 +43,7 @@ services:
 
     # Bind-mount the servers configuration into the container
     volumes:
-      - ./remote_servers.yaml:/app/config/remote_servers.yaml:ro
+      - ./config/remote_servers.yaml:/app/config/remote_servers.yaml:ro
 
     # Map host port 8080 → container port 8080
     ports:
@@ -51,3 +51,15 @@ services:
 
     # Restart policy for production deployments
     restart: unless-stopped
+
+    # Health check — /health always returns 200; read the status field for degraded upstreams
+    healthcheck:
+      test:
+        - "CMD"
+        - "python3"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

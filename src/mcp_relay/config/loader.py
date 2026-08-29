@@ -1,4 +1,4 @@
-"""YAML config loading for remote server definitions."""
+"""YAML config loading and validation for remote server definitions."""
 
 from __future__ import annotations
 
@@ -9,6 +9,66 @@ import anyio
 import yaml
 
 logger = logging.getLogger(__name__)
+
+_VALID_TRANSPORTS = {"sse", "streamable_http"}
+_VALID_AUTH_TYPES = {
+    "none",
+    "api_key_query",
+    "api_key_url_path",
+    "api_key_header",
+    "bearer",
+    "oauth2_client_credentials",
+}
+_OAUTH2_REQUIRED = {"token_url", "client_id", "client_secret"}
+
+
+def validate_servers(servers: list[dict]) -> None:
+    """Raise ValueError with a clear message on the first config error found."""
+    for i, srv in enumerate(servers):
+        label = f"servers[{i}]"
+
+        if not srv.get("name"):
+            raise ValueError(f"{label}: missing required field 'name'")
+        label = f"server {srv['name']!r}"
+
+        if not srv.get("url"):
+            raise ValueError(f"{label}: missing required field 'url'")
+
+        transport = srv.get("transport", "sse")
+        if transport not in _VALID_TRANSPORTS:
+            raise ValueError(
+                f"{label}: invalid transport {transport!r} — "
+                f"must be one of {sorted(_VALID_TRANSPORTS)}"
+            )
+
+        auth = srv.get("auth") or {}
+        auth_type = auth.get("type", "none")
+        if auth_type not in _VALID_AUTH_TYPES:
+            raise ValueError(
+                f"{label}: invalid auth.type {auth_type!r} — "
+                f"must be one of {sorted(_VALID_AUTH_TYPES)}"
+            )
+
+        if auth_type in {"api_key_query", "api_key_url_path", "api_key_header", "bearer"}:
+            if not auth.get("value"):
+                raise ValueError(
+                    f"{label}: auth.type={auth_type!r} requires 'auth.value'"
+                )
+
+        if auth_type == "oauth2_client_credentials":
+            missing = _OAUTH2_REQUIRED - set(auth)
+            if missing:
+                raise ValueError(
+                    f"{label}: auth.type='oauth2_client_credentials' requires "
+                    f"{sorted(missing)}"
+                )
+
+        rl = srv.get("rate_limit") or {}
+        rpd = rl.get("requests_per_day")
+        if rpd is not None and (not isinstance(rpd, int) or rpd < 0):
+            raise ValueError(
+                f"{label}: rate_limit.requests_per_day must be a non-negative integer"
+            )
 
 
 async def load_servers(config_path: Path) -> list[dict]:

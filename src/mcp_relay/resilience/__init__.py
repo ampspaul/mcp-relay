@@ -1,1 +1,1 @@
-"""Resilience primitives — rate limiting, retry, circuit breaking, and caching."""
+"""Resilience primitives — rate limiting and circuit breaking."""

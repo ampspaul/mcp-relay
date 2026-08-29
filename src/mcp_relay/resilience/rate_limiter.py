@@ -31,16 +31,14 @@ async def check(server_cfg: dict) -> None:
     backend = get_backend()
     key = _rate_key(name)
 
-    current = await backend.get(key)
-    if current >= limit:
+    new_count = await backend.increment(key, ttl_seconds=_seconds_until_midnight())
+    logger.debug("[resilience] %s: rate limit %d/%d used today", name, new_count, limit)
+    if new_count > limit:
         metrics.increment("rate_limit_exceeded_total", server=name)
         raise RuntimeError(
             f"[{name}] daily quota of {limit} request(s) per day exhausted. "
             "Try again tomorrow or upgrade your API plan."
         )
-
-    new_count = await backend.increment(key, ttl_seconds=_seconds_until_midnight())
-    logger.debug("[resilience] %s: rate limit %d/%d used today", name, new_count, limit)
 
 
 def check_response(server_cfg: dict, parsed: Any) -> None:

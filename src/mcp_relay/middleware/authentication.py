@@ -12,8 +12,10 @@ from ..observability import metrics
 
 logger = logging.getLogger(__name__)
 
-# Paths that bypass auth — probes must always be reachable
-_EXEMPT = {"/health", "/metrics"}
+# Only /health bypasses auth so load-balancer probes always succeed.
+# /metrics is intentionally NOT exempt — it exposes tool names, call counts,
+# and error rates that can profile the deployment.
+_EXEMPT = {"/health"}
 
 
 class BearerAuthMiddleware(BaseHTTPMiddleware):

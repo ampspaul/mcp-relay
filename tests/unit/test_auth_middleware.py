@@ -45,9 +45,16 @@ def test_health_exempt_no_token():
     assert resp.status_code == 200
 
 
-def test_metrics_exempt_no_token():
+def test_metrics_requires_token():
+    # /metrics is NOT exempt — it exposes operational data that can profile the deployment
     client = TestClient(_make_app({"secret"}), raise_server_exceptions=False)
     resp = client.get("/metrics")
+    assert resp.status_code == 401
+
+
+def test_metrics_allowed_with_valid_token():
+    client = TestClient(_make_app({"secret"}), raise_server_exceptions=False)
+    resp = client.get("/metrics", headers={"Authorization": "Bearer secret"})
     assert resp.status_code == 200
 
 

@@ -1,1 +1,1 @@
-"""Domain models — server registration, security policies, and error responses."""
+"""Domain models — server configuration."""
