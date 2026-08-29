@@ -1,3 +1,3 @@
-from .server_registry import register_all, call_tool
+from .server_registry import call_tool, register_all
 
 __all__ = ["register_all", "call_tool"]

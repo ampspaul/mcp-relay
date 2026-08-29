@@ -1,9 +1,12 @@
 """Tests for auth/credential_cache.py and auth/resolver.py"""
+
 import time
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from src.mcp_relay.auth import credential_cache
-from src.mcp_relay.auth.resolver import resolve_connection, _mask_url, _mask_url_path_segment
+from src.mcp_relay.auth.resolver import _mask_url, _mask_url_path_segment, resolve_connection
 
 
 @pytest.fixture(autouse=True)
@@ -14,6 +17,7 @@ def clear_cache():
 
 
 # --- credential_cache ---
+
 
 def test_get_cached_miss_returns_none():
     assert credential_cache.get_cached("missing") is None
@@ -27,7 +31,8 @@ def test_set_and_get_cached():
 
 def test_cached_entry_expires():
     credential_cache._credential_cache["srv"] = (
-        ("https://example.com", {}), time.time() - 1  # already expired
+        ("https://example.com", {}),
+        time.time() - 1,  # already expired
     )
     assert credential_cache.get_cached("srv") is None
 
@@ -58,6 +63,7 @@ def test_returned_headers_are_a_copy():
 
 # --- _mask_url ---
 
+
 def test_mask_url_replaces_query_values():
     url = "https://api.example.com/mcp?api_key=supersecret&format=json"
     masked = _mask_url(url)
@@ -85,10 +91,14 @@ def test_mask_url_path_segment_empty_secret_unchanged():
 
 # --- resolve_connection (auth types) ---
 
+
 @pytest.mark.asyncio
 async def test_resolve_none_auth():
     cfg = {"name": "srv", "url": "https://example.com/mcp", "auth": {"type": "none"}}
-    with patch("src.mcp_relay.auth.resolver.resolve_secret_refs", new=AsyncMock(return_value={"type": "none"})):
+    with patch(
+        "src.mcp_relay.auth.resolver.resolve_secret_refs",
+        new=AsyncMock(return_value={"type": "none"}),
+    ):
         url, headers = await resolve_connection(cfg)
     assert url == "https://example.com/mcp"
     assert headers == {}

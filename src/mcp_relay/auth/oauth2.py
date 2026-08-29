@@ -1,7 +1,10 @@
 """OAuth2 client credentials flow with token caching."""
+
 from __future__ import annotations
+
 import logging
 import time
+
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -21,7 +24,9 @@ async def fetch_token(server_name: str, auth: dict) -> str:
             return token
 
     scope = auth.get("scope", "")
-    logger.info("[auth] %s: fetching OAuth2 token from %s (scope=%r)", server_name, token_url, scope)
+    logger.info(
+        "[auth] %s: fetching OAuth2 token from %s (scope=%r)", server_name, token_url, scope
+    )
 
     payload: dict = {
         "grant_type": "client_credentials",
@@ -39,8 +44,12 @@ async def fetch_token(server_name: str, auth: dict) -> str:
             r.raise_for_status()
             data = r.json()
     except httpx.HTTPStatusError as exc:
-        logger.error("[auth] %s: OAuth2 token request failed — HTTP %s from %s",
-                     server_name, exc.response.status_code, token_url)
+        logger.error(
+            "[auth] %s: OAuth2 token request failed — HTTP %s from %s",
+            server_name,
+            exc.response.status_code,
+            token_url,
+        )
         raise RuntimeError(
             f"[{server_name}] OAuth2 token fetch failed: HTTP {exc.response.status_code}"
         ) from None

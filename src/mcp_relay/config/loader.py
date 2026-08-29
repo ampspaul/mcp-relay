@@ -1,7 +1,10 @@
 """YAML config loading for remote server definitions."""
+
 from __future__ import annotations
+
 import logging
 from pathlib import Path
+
 import anyio
 import yaml
 

@@ -1,5 +1,7 @@
 """In-memory metrics — counters and histograms exposed via /metrics."""
+
 from __future__ import annotations
+
 from collections import defaultdict
 from typing import Any
 
@@ -37,10 +39,7 @@ def observe(name: str, value: float, **labels: str) -> None:
 def snapshot() -> dict[str, Any]:
     counters = dict(_counters)
     gauges = dict(_gauges)
-    histograms = {
-        k: {**v, "avg": round(v["sum"] / v["count"], 4)}
-        for k, v in _histograms.items()
-    }
+    histograms = {k: {**v, "avg": round(v["sum"] / v["count"], 4)} for k, v in _histograms.items()}
     return {"counters": counters, "gauges": gauges, "histograms": histograms}
 
 

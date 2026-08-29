@@ -1,7 +1,10 @@
 """Resolves authenticated (url, headers) for a configured remote server."""
+
 from __future__ import annotations
+
 import logging
 from urllib.parse import parse_qs, quote, urlencode, urlparse, urlunparse
+
 from . import credential_cache
 from .oauth2 import fetch_token
 from .secret_resolver import resolve_secret_refs
@@ -14,9 +17,9 @@ def _mask_url(url: str) -> str:
     if not parsed.query:
         return url
     masked = {k: ["***"] for k in parse_qs(parsed.query)}
-    return urlunparse(parsed._replace(
-        query=urlencode(masked, doseq=True, quote_via=lambda s, *_: s)
-    ))
+    return urlunparse(
+        parsed._replace(query=urlencode(masked, doseq=True, quote_via=lambda s, *_: s))
+    )
 
 
 def _mask_url_path_segment(url: str, secret_value: str) -> str:
@@ -52,7 +55,9 @@ async def resolve_connection(server_cfg: dict) -> tuple[str, dict[str, str]]:
         if placeholder not in url:
             raise ValueError(f"[auth] {name!r}: placeholder {placeholder!r} not found in url")
         url = url.replace(placeholder, quote(secret_value, safe=""))
-        logger.debug("[auth] %s: api_key_url_path → %s", name, _mask_url_path_segment(url, secret_value))
+        logger.debug(
+            "[auth] %s: api_key_url_path → %s", name, _mask_url_path_segment(url, secret_value)
+        )
     elif auth_type == "api_key_header":
         headers[auth.get("header_name", "X-Api-Key")] = auth["value"]
         logger.debug("[auth] %s: api_key_header set", name)

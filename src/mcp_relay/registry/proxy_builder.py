@@ -1,8 +1,11 @@
 """Build typed async proxy callables from MCP tool input schemas."""
+
 from __future__ import annotations
+
 import inspect
 import logging
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +38,16 @@ def build(
     for pname, pschema in props.items():
         py_t = _py_type(pschema)
         if pname in required:
-            param = inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=py_t)
+            param = inspect.Parameter(
+                pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=py_t
+            )
             annotations[pname] = py_t
         else:
             param = inspect.Parameter(
-                pname, inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                default=None, annotation=py_t | None,
+                pname,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=None,
+                annotation=py_t | None,
             )
             annotations[pname] = py_t | None
         params.append(param)

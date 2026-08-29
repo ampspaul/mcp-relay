@@ -1,6 +1,9 @@
 """Connects to a remote MCP server and lists available tools."""
+
 from __future__ import annotations
+
 import logging
+
 from ..transport.session import open_session
 
 logger = logging.getLogger(__name__)

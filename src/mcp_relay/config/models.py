@@ -1,5 +1,7 @@
 """Typed config models for server definitions (uses plain dataclasses — no extra deps)."""
+
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 

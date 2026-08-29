@@ -1,17 +1,20 @@
 """Regex and LLM-based PII redaction for tool inputs and outputs."""
+
 from __future__ import annotations
+
 import logging
 import os
 import re
+
 import httpx
 
 logger = logging.getLogger(__name__)
 
 _PII_PATTERNS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}'), '[email]'),
-    (re.compile(r'\b\d{3}-\d{2}-\d{4}\b'), '[ssn]'),
-    (re.compile(r'\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b'), '[card]'),
-    (re.compile(r'(\+1[\s\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b'), '[phone]'),
+    (re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"), "[email]"),
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[ssn]"),
+    (re.compile(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "[card]"),
+    (re.compile(r"(\+1[\s\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}\b"), "[phone]"),
 ]
 
 _OLLAMA_PII_PROMPT = (
@@ -50,17 +53,29 @@ async def llm_redact(text: str, model: str) -> str:
             resp.raise_for_status()
             result = resp.json().get("response", "").strip()
             if not result:
-                logger.warning("[security] pii_scan: Ollama returned empty response — falling back to regex")
+                logger.warning(
+                    "[security] pii_scan: Ollama returned empty response — falling back to regex"
+                )
                 return redact(text)
-            logger.info("[security] pii_scan: completed model=%r original=%d redacted=%d chars",
-                        model, len(text), len(result))
+            logger.info(
+                "[security] pii_scan: completed model=%r original=%d redacted=%d chars",
+                model,
+                len(text),
+                len(result),
+            )
             return result
     except httpx.ConnectError:
-        logger.warning("[security] pii_scan: Ollama unreachable at %s — falling back to regex", ollama_url)
+        logger.warning(
+            "[security] pii_scan: Ollama unreachable at %s — falling back to regex", ollama_url
+        )
     except httpx.TimeoutException:
-        logger.warning("[security] pii_scan: Ollama timed out (model=%r) — falling back to regex", model)
+        logger.warning(
+            "[security] pii_scan: Ollama timed out (model=%r) — falling back to regex", model
+        )
     except httpx.HTTPStatusError as exc:
-        logger.warning("[security] pii_scan: Ollama HTTP %d — falling back to regex", exc.response.status_code)
+        logger.warning(
+            "[security] pii_scan: Ollama HTTP %d — falling back to regex", exc.response.status_code
+        )
     except Exception as exc:
         logger.warning("[security] pii_scan: unexpected error (%s) — falling back to regex", exc)
 

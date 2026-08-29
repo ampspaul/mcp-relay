@@ -3,13 +3,16 @@
 Mocks at the transport layer (open_session) so the registry, discovery,
 and proxy-builder logic all run for real.
 """
+
 from __future__ import annotations
-import pytest
+
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ── MCP mock objects ─────────────────────────────────────────────────────────
+
 
 class _Tool:
     def __init__(self, name: str, description: str = "", schema: dict | None = None):
@@ -38,10 +41,12 @@ def _session_ctx(session: _Session):
     @asynccontextmanager
     async def _ctx(*_args, **_kwargs):
         yield session
+
     return _ctx
 
 
 # ── discover() ───────────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_discover_returns_tool_list():
@@ -51,6 +56,7 @@ async def test_discover_returns_tool_list():
 
     with patch("src.mcp_relay.registry.tool_discovery.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.tool_discovery import discover
+
         result = await discover(cfg)
 
     assert len(result) == 2
@@ -68,6 +74,7 @@ async def test_discover_returns_empty_list_on_session_error():
     cfg = {"name": "bad-srv", "url": "https://bad.example.com/mcp"}
     with patch("src.mcp_relay.registry.tool_discovery.open_session", _failing_ctx):
         from src.mcp_relay.registry.tool_discovery import discover
+
         result = await discover(cfg)
 
     assert result == []
@@ -80,12 +87,14 @@ async def test_discover_returns_empty_list_on_empty_server():
 
     with patch("src.mcp_relay.registry.tool_discovery.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.tool_discovery import discover
+
         result = await discover(cfg)
 
     assert result == []
 
 
 # ── register_all() ───────────────────────────────────────────────────────────
+
 
 def _mcp_mock():
     mcp = MagicMock()
@@ -102,10 +111,13 @@ async def test_register_all_adds_tools_to_mcp():
     cfg = [{"name": "weather", "url": "https://weather.example.com/mcp", "enabled": True}]
     mcp = _mcp_mock()
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 2
@@ -117,13 +129,18 @@ async def test_register_all_adds_tools_to_mcp():
 @pytest.mark.asyncio
 async def test_register_all_applies_tool_prefix():
     tools = [_Tool("search"), _Tool("index")]
-    cfg = [{"name": "elastic", "url": "https://es.example.com", "enabled": True, "tool_prefix": "es_"}]
+    cfg = [
+        {"name": "elastic", "url": "https://es.example.com", "enabled": True, "tool_prefix": "es_"}
+    ]
     mcp = _mcp_mock()
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 2
@@ -143,10 +160,13 @@ async def test_register_all_skips_disabled_servers():
     async def _discover(server_cfg):
         return tools if server_cfg["name"] == "active" else []
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES), \
-         patch("src.mcp_relay.registry.server_registry.discover", side_effect=_discover):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", side_effect=_discover),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 1
@@ -156,7 +176,7 @@ async def test_register_all_skips_disabled_servers():
 @pytest.mark.asyncio
 async def test_register_all_skips_colliding_tool_names():
     tools_a = [_Tool("query")]
-    tools_b = [_Tool("query")]   # same name — collision
+    tools_b = [_Tool("query")]  # same name — collision
     cfg = [
         {"name": "srv-a", "url": "https://a.example.com", "enabled": True},
         {"name": "srv-b", "url": "https://b.example.com", "enabled": True},
@@ -166,10 +186,13 @@ async def test_register_all_skips_colliding_tool_names():
     async def _discover(server_cfg):
         return tools_a if server_cfg["name"] == "srv-a" else tools_b
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES), \
-         patch("src.mcp_relay.registry.server_registry.discover", side_effect=_discover):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", side_effect=_discover),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     # Only the first "query" is registered; the second is skipped
@@ -182,10 +205,13 @@ async def test_register_all_raises_if_all_servers_return_no_tools():
     cfg = [{"name": "broken", "url": "https://broken.example.com", "enabled": True}]
     mcp = _mcp_mock()
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=[])):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=[])),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         with pytest.raises(RuntimeError, match="startup failed"):
             await register_all(mcp)
 
@@ -194,9 +220,12 @@ async def test_register_all_raises_if_all_servers_return_no_tools():
 async def test_register_all_returns_zero_with_no_servers():
     mcp = _mcp_mock()
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=[])), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=[])),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 0
@@ -209,10 +238,13 @@ async def test_register_all_tool_description_forwarded():
     cfg = [{"name": "srv", "url": "https://srv.example.com", "enabled": True}]
     mcp = _mcp_mock()
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         await register_all(mcp)
 
     call_kwargs = mcp.add_tool.call_args.kwargs
@@ -221,6 +253,7 @@ async def test_register_all_tool_description_forwarded():
 
 # ── tool blocklist ────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_blocklist_skips_blocked_tool():
     tools = [_Tool("safe_tool"), _Tool("dangerous_tool")]
@@ -228,10 +261,13 @@ async def test_blocklist_skips_blocked_tool():
     mcp = _mcp_mock()
     policies = AsyncMock(return_value={"tool_blocklist": ["dangerous_tool"]})
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", policies), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", policies),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 1
@@ -244,14 +280,19 @@ async def test_blocklist_skips_blocked_tool():
 async def test_blocklist_matches_original_tool_name_not_prefix():
     # prefix is applied after blocklist check — blocklist uses the upstream name
     tools = [_Tool("admin_reset"), _Tool("query")]
-    cfg = [{"name": "srv", "url": "https://srv.example.com", "enabled": True, "tool_prefix": "fin_"}]
+    cfg = [
+        {"name": "srv", "url": "https://srv.example.com", "enabled": True, "tool_prefix": "fin_"}
+    ]
     mcp = _mcp_mock()
     policies = AsyncMock(return_value={"tool_blocklist": ["admin_reset"]})
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", policies), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", policies),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 1
@@ -273,10 +314,13 @@ async def test_blocklist_blocks_across_all_servers():
     async def _discover(server_cfg):
         return tools_a if server_cfg["name"] == "srv-a" else tools_b
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", policies), \
-         patch("src.mcp_relay.registry.server_registry.discover", side_effect=_discover):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", policies),
+        patch("src.mcp_relay.registry.server_registry.discover", side_effect=_discover),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 2
@@ -292,10 +336,102 @@ async def test_empty_blocklist_registers_all_tools():
     mcp = _mcp_mock()
     policies = AsyncMock(return_value={"tool_blocklist": []})
 
-    with patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)), \
-         patch("src.mcp_relay.registry.server_registry.load_security_policies", policies), \
-         patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)):
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", policies),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
         from src.mcp_relay.registry.server_registry import register_all
+
         count = await register_all(mcp)
 
     assert count == 3
+
+
+# ── per-server tool_blocklist ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_per_server_blocklist_blocks_tool_on_that_server():
+    tools = [_Tool("safe_tool"), _Tool("noisy_tool")]
+    cfg = [
+        {
+            "name": "srv",
+            "url": "https://srv.example.com",
+            "enabled": True,
+            "tool_blocklist": ["noisy_tool"],
+        }
+    ]
+    mcp = _mcp_mock()
+
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
+        from src.mcp_relay.registry.server_registry import register_all
+
+        count = await register_all(mcp)
+
+    assert count == 1
+    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
+    assert registered_names == {"safe_tool"}
+
+
+@pytest.mark.asyncio
+async def test_per_server_blocklist_does_not_affect_other_servers():
+    tools = [_Tool("shared_tool"), _Tool("local_only")]
+    cfg = [
+        {
+            "name": "srv-a",
+            "url": "https://a.example.com",
+            "enabled": True,
+            "tool_blocklist": ["local_only"],
+        },
+        {"name": "srv-b", "url": "https://b.example.com", "enabled": True, "tool_prefix": "b_"},
+    ]
+    mcp = _mcp_mock()
+
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", _EMPTY_POLICIES),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
+        from src.mcp_relay.registry.server_registry import register_all
+
+        await register_all(mcp)
+
+    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
+    # srv-a: shared_tool only (local_only blocked); srv-b: both with prefix
+    assert "shared_tool" in registered_names
+    assert "local_only" not in registered_names
+    assert "b_shared_tool" in registered_names
+    assert "b_local_only" in registered_names
+
+
+@pytest.mark.asyncio
+async def test_global_and_per_server_blocklists_are_combined():
+    tools = [_Tool("global_bad"), _Tool("local_bad"), _Tool("safe")]
+    cfg = [
+        {
+            "name": "srv",
+            "url": "https://srv.example.com",
+            "enabled": True,
+            "tool_blocklist": ["local_bad"],
+        }
+    ]
+    mcp = _mcp_mock()
+    policies = AsyncMock(return_value={"tool_blocklist": ["global_bad"]})
+
+    with (
+        patch("src.mcp_relay.registry.server_registry._load_servers", AsyncMock(return_value=cfg)),
+        patch("src.mcp_relay.registry.server_registry.load_security_policies", policies),
+        patch("src.mcp_relay.registry.server_registry.discover", AsyncMock(return_value=tools)),
+    ):
+        from src.mcp_relay.registry.server_registry import register_all
+
+        count = await register_all(mcp)
+
+    assert count == 1
+    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
+    assert registered_names == {"safe"}

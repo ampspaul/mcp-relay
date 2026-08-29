@@ -1,10 +1,13 @@
 """Tests for registry/proxy_builder.py"""
-import inspect
-import pytest
-from src.mcp_relay.registry.proxy_builder import build, _py_type
 
+import inspect
+
+import pytest
+
+from src.mcp_relay.registry.proxy_builder import _py_type, build
 
 # --- _py_type ---
+
 
 def test_py_type_string():
     assert _py_type({"type": "string"}) is str
@@ -32,6 +35,7 @@ def test_py_type_object():
 
 def test_py_type_unknown_falls_back_to_any():
     from typing import Any
+
     assert _py_type({"type": "exotic"}) is Any
 
 
@@ -40,6 +44,7 @@ def test_py_type_missing_type_defaults_to_str():
 
 
 # --- build ---
+
 
 @pytest.fixture
 def calls():
@@ -51,6 +56,7 @@ def call_fn(calls):
     async def _fn(cfg, tool_name, args):
         calls.append((cfg, tool_name, args))
         return {"ok": True}
+
     return _fn
 
 
@@ -82,17 +88,23 @@ def test_optional_param_defaults_to_none(call_fn):
 
 
 async def test_proxy_forwards_non_none_args(call_fn, calls):
-    proxy = build({"name": "s"}, "tool",
-                  _schema({"q": {"type": "string"}, "limit": {"type": "integer"}}, ["q"]),
-                  call_fn)
+    proxy = build(
+        {"name": "s"},
+        "tool",
+        _schema({"q": {"type": "string"}, "limit": {"type": "integer"}}, ["q"]),
+        call_fn,
+    )
     await proxy(q="hello", limit=None)
-    assert calls[0][2] == {"q": "hello"}   # limit was None, stripped
+    assert calls[0][2] == {"q": "hello"}  # limit was None, stripped
 
 
 async def test_proxy_strips_none_optional_args(call_fn, calls):
-    proxy = build({"name": "s"}, "tool",
-                  _schema({"a": {"type": "string"}, "b": {"type": "string"}}, ["a"]),
-                  call_fn)
+    proxy = build(
+        {"name": "s"},
+        "tool",
+        _schema({"a": {"type": "string"}, "b": {"type": "string"}}, ["a"]),
+        call_fn,
+    )
     await proxy(a="x", b=None)
     assert "b" not in calls[0][2]
 

@@ -1,5 +1,5 @@
 """Tests for security/pii_redactor.py"""
-import pytest
+
 from src.mcp_relay.security.pii_redactor import redact, sanitize_args
 
 

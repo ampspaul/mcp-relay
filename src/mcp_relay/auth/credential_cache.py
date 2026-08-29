@@ -1,5 +1,7 @@
 """In-memory credential cache with TTL for resolved auth credentials."""
+
 from __future__ import annotations
+
 import logging
 import time
 

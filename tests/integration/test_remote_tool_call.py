@@ -3,14 +3,17 @@
 Mocks at the transport layer so the full call_tool() pipeline
 (rate limiting, session, response parsing) runs for real.
 """
+
 from __future__ import annotations
+
 import json
-import pytest
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
+import pytest
 
 # ── MCP mock objects ─────────────────────────────────────────────────────────
+
 
 class _Content:
     def __init__(self, text=None, data=None):
@@ -44,6 +47,7 @@ def _session_ctx(session: _Session):
     @asynccontextmanager
     async def _ctx(*_args, **_kwargs):
         yield session
+
     return _ctx
 
 
@@ -53,13 +57,15 @@ def _cfg(name: str = "test-srv", **flags) -> dict:
 
 # ── call_tool() response types ────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_json_response_parsed_to_dict():
     payload = {"temperature": 72, "unit": "F"}
     session = _Session(_CallResult([_Content(text=json.dumps(payload))]))
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         result = await call_tool(_cfg(), "get_weather", {"city": "NYC"})
 
     assert result == payload
@@ -69,8 +75,9 @@ async def test_json_response_parsed_to_dict():
 async def test_plain_text_response_returned_as_string():
     session = _Session(_CallResult([_Content(text="Hello, world!")]))
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         result = await call_tool(_cfg(), "greet", {})
 
     assert result == "Hello, world!"
@@ -80,8 +87,9 @@ async def test_plain_text_response_returned_as_string():
 async def test_empty_content_returns_empty_dict():
     session = _Session(_CallResult(content=[]))
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         result = await call_tool(_cfg(), "ping", {})
 
     assert result == {}
@@ -92,8 +100,9 @@ async def test_data_content_returned_directly():
     binary = b"\x89PNG\r\n"
     session = _Session(_CallResult([_Content(data=binary)]))
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         result = await call_tool(_cfg(), "screenshot", {})
 
     assert result == binary
@@ -103,8 +112,9 @@ async def test_data_content_returned_directly():
 async def test_is_error_true_raises_runtime_error():
     session = _Session(_CallResult([_Content(text="Tool not found")], is_error=True))
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         with pytest.raises(RuntimeError, match="failed"):
             await call_tool(_cfg(), "broken_tool", {})
 
@@ -113,8 +123,9 @@ async def test_is_error_true_raises_runtime_error():
 async def test_is_error_message_contains_tool_name():
     session = _Session(_CallResult([_Content(text="oops")], is_error=True))
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         with pytest.raises(RuntimeError, match="my_tool"):
             await call_tool(_cfg(), "my_tool", {})
 
@@ -126,8 +137,9 @@ async def test_transport_exception_raises_runtime_error():
         raise ConnectionError("timeout")
         yield  # noqa: unreachable
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _failing):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _failing):
         from src.mcp_relay.registry.server_registry import call_tool
+
         with pytest.raises(RuntimeError, match="transport error"):
             await call_tool(_cfg(), "my_tool", {})
 
@@ -137,8 +149,9 @@ async def test_arguments_forwarded_to_session():
     captured: list = []
     session = _Session(_CallResult([_Content(text="{}")]), capture=captured)
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         await call_tool(_cfg(), "search", {"query": "hello", "limit": 10})
 
     assert captured[0] == ("search", {"query": "hello", "limit": 10})
@@ -150,24 +163,28 @@ async def test_rate_limit_response_signal_raises():
     session = _Session(_CallResult([_Content(text=json.dumps(payload))]))
     cfg = _cfg(rate_limit={"response_signal_keys": ["Note"]})
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
+
         with pytest.raises(RuntimeError, match="rate limit"):
             await call_tool(cfg, "get_quote", {})
 
 
 @pytest.mark.asyncio
 async def test_rate_limit_daily_quota_exceeded():
-    from src.mcp_relay.resilience import rate_limiter
-    rate_limiter._rate_counters.clear()
+    from src.mcp_relay.resilience import state_backend
+    from src.mcp_relay.resilience.backends.memory import MemoryBackend
+
+    state_backend._instance = MemoryBackend()
 
     session = _Session(_CallResult([_Content(text="{}")]))
     cfg = _cfg(rate_limit={"requests_per_day": 1})
 
-    with patch("src.mcp_relay.registry.server_registry.open_session", _session_ctx(session)):
+    with patch("src.mcp_relay.transport.session_pool.open_session", _session_ctx(session)):
         from src.mcp_relay.registry.server_registry import call_tool
-        await call_tool(cfg, "tool", {})   # first call — allowed
+
+        await call_tool(cfg, "tool", {})  # first call — allowed
         with pytest.raises(RuntimeError, match="daily quota"):
             await call_tool(cfg, "tool", {})  # second call — blocked
 
-    rate_limiter._rate_counters.clear()
+    state_backend.reset_backend()

@@ -185,8 +185,7 @@ async def _resolve_env(name: str) -> str:
     value = os.environ.get(env_name)
     if value is None:
         raise KeyError(
-            f"Secret {name!r} not found in environment "
-            f"(looked for env var {env_name!r})."
+            f"Secret {name!r} not found in environment (looked for env var {env_name!r})."
         )
     return value
 
@@ -212,17 +211,13 @@ async def _resolve_gcp(name: str) -> str:
 
     project_id = os.environ.get("GCP_PROJECT_ID")
     if not project_id:
-        raise RuntimeError(
-            "SECRET_BACKEND=gcp requires the GCP_PROJECT_ID environment variable."
-        )
+        raise RuntimeError("SECRET_BACKEND=gcp requires the GCP_PROJECT_ID environment variable.")
 
     # Accept both bare names and fully-qualified resource names.
     if name.startswith("projects/"):
         resource_name = name if "/versions/" in name else f"{name}/versions/latest"
     else:
-        resource_name = (
-            f"projects/{project_id}/secrets/{name}/versions/latest"
-        )
+        resource_name = f"projects/{project_id}/secrets/{name}/versions/latest"
 
     import anyio
 
@@ -266,13 +261,13 @@ async def _resolve_aws(name: str) -> str:
             response = client.get_secret_value(SecretId=name)
         except client.exceptions.ResourceNotFoundException as exc:
             raise KeyError(
-                f"Secret {name!r} not found in AWS Secrets Manager "
-                f"(region: {region!r})."
+                f"Secret {name!r} not found in AWS Secrets Manager (region: {region!r})."
             ) from exc
         # SecretString for text secrets; SecretBinary for binary.
         if "SecretString" in response:
             return response["SecretString"]
         import base64
+
         return base64.b64decode(response["SecretBinary"]).decode("utf-8")
 
     return await anyio.to_thread.run_sync(_sync_fetch)
@@ -311,13 +306,9 @@ async def _resolve_azure(name: str) -> str:
         try:
             secret = client.get_secret(name)
         except Exception as exc:
-            raise KeyError(
-                f"Secret {name!r} not found in Azure Key Vault {vault_url!r}."
-            ) from exc
+            raise KeyError(f"Secret {name!r} not found in Azure Key Vault {vault_url!r}.") from exc
         if secret.value is None:
-            raise KeyError(
-                f"Secret {name!r} in Azure Key Vault {vault_url!r} has no value."
-            )
+            raise KeyError(f"Secret {name!r} in Azure Key Vault {vault_url!r} has no value.")
         return secret.value
 
     return await anyio.to_thread.run_sync(_sync_fetch)
@@ -349,13 +340,9 @@ async def _resolve_vault(name: str) -> str:
     vault_token = os.environ.get("VAULT_TOKEN")
 
     if not vault_addr:
-        raise RuntimeError(
-            "SECRET_BACKEND=vault requires the VAULT_ADDR environment variable."
-        )
+        raise RuntimeError("SECRET_BACKEND=vault requires the VAULT_ADDR environment variable.")
     if not vault_token:
-        raise RuntimeError(
-            "SECRET_BACKEND=vault requires the VAULT_TOKEN environment variable."
-        )
+        raise RuntimeError("SECRET_BACKEND=vault requires the VAULT_TOKEN environment variable.")
 
     import anyio
 

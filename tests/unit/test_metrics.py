@@ -1,6 +1,9 @@
 """Unit tests for the in-memory metrics module."""
+
 from __future__ import annotations
+
 import pytest
+
 from src.mcp_relay.observability import metrics
 
 
@@ -12,6 +15,7 @@ def _reset():
 
 
 # ── counters ──────────────────────────────────────────────────────────────────
+
 
 def test_increment_creates_counter():
     metrics.increment("tool_calls_total", server="srv", tool="search")
@@ -42,6 +46,7 @@ def test_no_labels_key_is_just_name():
 
 # ── gauges ────────────────────────────────────────────────────────────────────
 
+
 def test_gauge_sets_value():
     metrics.gauge("tools_registered", 42.0, server="alpha_vantage")
     snap = metrics.snapshot()
@@ -56,6 +61,7 @@ def test_gauge_overwrites_previous_value():
 
 
 # ── histograms ────────────────────────────────────────────────────────────────
+
 
 def test_observe_tracks_count_and_sum():
     metrics.observe("tool_call_duration_seconds", 0.1, server="srv")
@@ -85,6 +91,7 @@ def test_observe_computes_avg():
 
 
 # ── reset ─────────────────────────────────────────────────────────────────────
+
 
 def test_reset_clears_all():
     metrics.increment("tool_calls_total", server="srv", tool="t")

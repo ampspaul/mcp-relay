@@ -1,4 +1,5 @@
 """Tests for security/secret_redactor.py"""
+
 from src.mcp_relay.security.secret_redactor import redact
 
 

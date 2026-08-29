@@ -1,11 +1,15 @@
 """MCP transport session management (SSE and StreamableHTTP)."""
+
 from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
+
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+
 from ..auth.resolver import resolve_connection
 
 logger = logging.getLogger(__name__)
@@ -32,7 +36,8 @@ async def open_session(server_cfg: dict):
     try:
         if transport == "streamable_http":
             async with streamablehttp_client(
-                url, headers=headers,
+                url,
+                headers=headers,
                 timeout=_CONNECT_TIMEOUT,
                 sse_read_timeout=_READ_TIMEOUT,
             ) as (read, write, _):
@@ -42,7 +47,8 @@ async def open_session(server_cfg: dict):
                     yield session
         elif transport == "sse":
             async with sse_client(
-                url, headers=headers,
+                url,
+                headers=headers,
                 timeout=_CONNECT_TIMEOUT,
                 sse_read_timeout=_READ_TIMEOUT,
             ) as (read, write):
@@ -56,5 +62,7 @@ async def open_session(server_cfg: dict):
                 "— expected 'sse' or 'streamable_http'"
             )
     except Exception as exc:
-        logger.error("[transport] %s: session error (transport=%s): %s", name, transport, safe_exc_msg(exc))
+        logger.error(
+            "[transport] %s: session error (transport=%s): %s", name, transport, safe_exc_msg(exc)
+        )
         raise

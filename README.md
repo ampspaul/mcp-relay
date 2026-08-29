@@ -18,8 +18,11 @@ LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Serve
 - **Pluggable secrets** — env vars (default), GCP Secret Manager, AWS Secrets Manager, Azure Key Vault, HashiCorp Vault
 - **Security pipeline** — input/output sanitization, PII redaction (regex + optional Ollama LLM), prompt-injection detection
 - **Tool blocklist** — globally suppress specific upstream tools via `config/security_policies.yaml`
+- **Inbound auth** — optional bearer-token auth on the relay's own SSE endpoint
+- **Dynamic tool discovery** — optional background refresh loop picks up new/removed upstream tools without restart
+- **Registry endpoint** — `GET /registry` lists all servers, their available tools, and any blocked tools
 - **Observability** — structured JSON logging and in-memory metrics exposed at `/metrics`
-- **Rate limiting** — per-server daily quota with response-signal detection
+- **Rate limiting** — per-server daily quota with response-signal detection; persistent counters via Redis
 - **Token caching** — OAuth2 tokens and resolved credentials cached in-memory (5-min TTL)
 - **Non-root container** — multi-stage Dockerfile, runs as uid 1000
 
@@ -40,6 +43,7 @@ mcp-relay/
 │   ├── registry/           # tool discovery and proxy registration
 │   │   ├── server_registry.py  # load config, call tools, register proxies
 │   │   ├── tool_discovery.py   # list_tools() per server
+│   │   ├── tool_refresher.py   # background refresh loop for dynamic discovery
 │   │   └── proxy_builder.py    # typed async proxy callables
 │   ├── transport/          # MCP session management
 │   │   └── session.py      # open_session() — SSE and StreamableHTTP
@@ -48,9 +52,13 @@ mcp-relay/
 │   │   ├── pii_redactor.py     # regex + optional Ollama LLM
 │   │   └── prompt_injection.py
 │   ├── resilience/
-│   │   └── rate_limiter.py
+│   │   ├── rate_limiter.py
+│   │   ├── state_backend.py        # pluggable backend interface (memory / Redis)
+│   │   └── backends/
+│   │       ├── memory.py           # default — in-process, resets on restart
+│   │       └── redis_backend.py    # persistent, multi-instance safe
 │   ├── config/             # typed config models and YAML loader
-│   ├── api/                # HTTP endpoints (health, admin)
+│   ├── api/                # HTTP endpoints (health, metrics, registry)
 │   ├── middleware/         # Starlette middleware stubs
 │   ├── observability/      # structured JSON logging and in-memory metrics
 │   ├── exceptions/
@@ -96,7 +104,7 @@ docker compose up -d
 
 # 5. Verify
 curl http://localhost:8080/health
-# → {"status":"ok","service":"mcp-relay"}
+# → {"status":"ok","service":"mcp-relay","upstreams":[{"name":"alpha_vantage","status":"ok",...}]}
 ```
 
 ### Run locally
@@ -165,6 +173,8 @@ servers:
     auth:
       type: <auth-type>       # see Authentication section below
       ...
+    # Per-server tool blocklist (optional) — blocks these tools on this server only
+    tool_blocklist: []
     # Security flags (all optional, default false)
     sanitize_input: false
     sanitize_output: false
@@ -354,31 +364,160 @@ If Ollama is unreachable or times out, the pipeline falls back to regex — no r
 
 ## config/security_policies.yaml reference
 
-`config/security_policies.yaml` holds global security rules that apply across all upstream servers.
+`config/security_policies.yaml` holds global security rules and operational settings that apply across all upstream servers.
+
+### Dynamic tool discovery
+
+By default the relay discovers tools once at startup. Set `tool_refresh_interval_seconds` to have the relay periodically re-query every enabled upstream server, picking up new or removed tools without a restart:
+
+```yaml
+tool_refresh_interval_seconds: 300   # refresh every 5 minutes (0 = disabled)
+```
+
+When a new tool appears upstream it is registered automatically; when a tool disappears it is unregistered. Changes are reflected in `/registry` immediately after the next cycle. Values under 60 are not recommended — each cycle opens a session to every enabled upstream server.
+
+New metrics are emitted per cycle:
+
+| Metric | Description |
+|--------|-------------|
+| `tool_refresh_total` | Number of refresh cycles completed |
+| `tools_added_total` | Tools registered mid-flight, labelled by server |
+| `tools_removed_total` | Tools unregistered mid-flight, labelled by server |
+
+### Inbound authentication
+
+Control who can connect to the relay's `/sse` endpoint. Configure in `config/security_policies.yaml`:
+
+```yaml
+inbound_auth:
+  type: bearer          # or: none (default — open access)
+  tokens:
+    - "secret::relay-api-key-1"   # resolved via SECRET_BACKEND at startup
+    - "secret::relay-api-key-2"   # multiple tokens for key rotation
+```
+
+Add the corresponding env vars to `.env`:
+
+```bash
+export RELAY_API_KEY_1=your-strong-random-key
+export RELAY_API_KEY_2=another-key-for-rotation
+```
+
+With bearer auth enabled, every request to `/sse` must include:
+
+```
+Authorization: Bearer your-strong-random-key
+```
+
+`/health` and `/metrics` are always exempt so load-balancer probes continue to work. All other endpoints — including `/registry` and `/sse` — require a valid token.
+
+Rejected requests return `401` with `WWW-Authenticate: Bearer` and are counted in the `inbound_auth_rejected_total` metric (labelled by reason: `missing_token` or `invalid_token`).
 
 ### Tool blocklist
 
-Prevent specific upstream tools from ever being exposed to the LLM client, regardless of which server provides them. Matches against the **upstream tool name** (before any `tool_prefix` is applied).
+The relay supports two levels of tool blocking that are applied together:
+
+#### Global blocklist — `config/security_policies.yaml`
+
+Blocks a tool name across **all** upstream servers. Use this as a security kill-switch for tools that are dangerous regardless of source.
 
 ```yaml
 tool_blocklist:
-  - delete_account   # never expose destructive ops
+  - delete_account   # blocked on every server
   - drop_table
-  - admin_reset
 ```
 
-The relay logs each blocked tool at startup:
+#### Per-server blocklist — `config/remote_servers.yaml`
+
+Blocks tools only on that specific server. Use this to trim a noisy tool list without affecting other servers that happen to have the same tool name.
+
+```yaml
+servers:
+  - name: alpha_vantage
+    url: "https://..."
+    tool_blocklist:
+      - SUGAR
+      - WHEAT
+```
+
+Both lists are combined — a tool blocked by either is suppressed. The relay logs which config file triggered the block:
 
 ```
-[registry] alpha_vantage: tool 'admin_reset' blocked by security_policies.yaml
+[registry] alpha_vantage: tool 'SUGAR' blocked by remote_servers.yaml
+[registry] alpha_vantage: tool 'delete_account' blocked by security_policies.yaml
 ```
 
-Use this to:
-- Lock out dangerous or privileged tools from a server you don't fully control
-- Trim a large upstream tool list down to only what your app needs
-- Enforce a consistent policy across multiple servers without editing each one individually
+Blocked tools appear in `GET /registry` under `tools.blocked` so you can always see what's been suppressed and why.
 
-> **Note:** `tool_blocklist: []` (the default) means no tools are blocked.
+> **Note:** Both lists match against the **upstream tool name** (before any `tool_prefix` is applied).
+
+### Per-call timeout
+
+Set the maximum time (in seconds) the relay will wait for a single upstream tool call — session open plus response. Requests that exceed the limit are cancelled and counted as failures toward the circuit breaker threshold.
+
+```yaml
+# config/security_policies.yaml
+tool_call_timeout_seconds: 30   # global default (applies to all servers)
+```
+
+Override per server:
+
+```yaml
+# config/remote_servers.yaml
+servers:
+  - name: slow_api
+    url: "https://..."
+    tool_call_timeout_seconds: 60   # this server gets a longer budget
+```
+
+When a call times out, the LLM receives a `RuntimeError` message and the relay logs:
+
+```
+[registry] alpha_vantage: tool=TIME_SERIES_DAILY timed out after 30.0s
+```
+
+### Circuit breaker
+
+The circuit breaker stops cascading failures when an upstream server is slow or unreachable. Configure globally in `config/security_policies.yaml`:
+
+```yaml
+circuit_breaker:
+  failure_threshold: 5        # consecutive failures before opening the circuit
+  recovery_timeout_seconds: 60 # seconds to wait before probing again (HALF_OPEN)
+  success_threshold: 1         # successful probes needed to return to CLOSED
+```
+
+Override per server in `config/remote_servers.yaml`:
+
+```yaml
+servers:
+  - name: alpha_vantage
+    url: "https://..."
+    circuit_breaker:
+      failure_threshold: 3
+      recovery_timeout_seconds: 30
+```
+
+**State machine:**
+
+| State | Behaviour |
+|-------|-----------|
+| `closed` | Normal — calls flow through; failures are counted |
+| `open` | Tripped — calls are rejected immediately without hitting upstream |
+| `half_open` | Recovery window elapsed — one probe is allowed through; success → `closed`, failure → `open` |
+
+When the circuit is open, the LLM receives a `CircuitOpenError` message explaining when to retry. The relay logs a warning and increments the `circuit_open_total` metric. Both `asyncio.TimeoutError` (from the per-call timeout) and transport errors count toward the failure threshold.
+
+Current circuit breaker state per server is visible in `GET /registry` under `circuit_breaker`:
+
+```json
+{
+  "circuit_breaker": {
+    "state": "open",
+    "failure_count": 5
+  }
+}
+```
 
 ---
 
@@ -432,13 +571,99 @@ curl http://localhost:8080/metrics
 |--------|------|-------------|
 | `tool_calls_total` | counter | Total calls, labelled by server and tool name |
 | `tool_errors_total` | counter | Failures by type: `transport` or `tool_error` |
-| `tools_registered` | gauge | Tools discovered per server at startup |
+| `tools_registered` | gauge | Tools currently registered per server |
 | `tool_call_duration_seconds` | histogram | Latency per server — min, max, avg, sum, count |
+| `tool_refresh_total` | counter | Background discovery cycles completed |
+| `tools_added_total` | counter | Tools registered mid-flight by refresh loop, per server |
+| `tools_removed_total` | counter | Tools unregistered mid-flight by refresh loop, per server |
 | `rate_limit_exceeded_total` | counter | Daily quota exhausted, per server |
 | `rate_limit_signal_total` | counter | API-signalled rate limits (e.g. `Note` key in response), per server |
 | `injection_blocked_total` | counter | Blocked responses per server and injection pattern |
+| `inbound_auth_rejected_total` | counter | Rejected inbound requests, labelled by `reason` (`missing_token` / `invalid_token`) |
+| `inbound_auth_accepted_total` | counter | Accepted inbound requests |
+| `circuit_open_total` | counter | Calls rejected because the circuit is open, per server |
+| `tool_timeout_total` | counter | Tool calls cancelled due to timeout, per server |
 
 Metrics are in-memory and reset on restart. For persistent metrics, scrape `/metrics` with a cron job or sidecar and push to your preferred store.
+
+### Registry endpoint
+
+`GET /registry` returns a real-time view of every configured server, the tools currently registered from it, and any tools blocked by `security_policies.yaml`:
+
+```bash
+curl http://localhost:8080/registry
+```
+
+```json
+{
+  "servers": [
+    {
+      "name": "alpha_vantage",
+      "url": "https://mcp.alpha-vantage.io/sse",
+      "enabled": true,
+      "tool_prefix": "av_",
+      "tools": {
+        "available": [
+          {
+            "name": "av_get_quote",
+            "description": "Get the latest price quote for a stock ticker.",
+            "parameters": [
+              {"name": "symbol", "type": "string", "required": true, "description": "Ticker symbol, e.g. MSFT"}
+            ]
+          }
+        ],
+        "blocked": [
+          {
+            "name": "av_admin_reset",
+            "description": "Resets all account data."
+          }
+        ]
+      },
+      "counts": {
+        "available": 1,
+        "blocked": 1
+      },
+      "circuit_breaker": {
+        "state": "closed",
+        "failure_count": 0
+      }
+    }
+  ],
+  "summary": {
+    "total_servers": 1,
+    "enabled_servers": 1,
+    "available_tools": 1,
+    "blocked_tools": 1
+  }
+}
+```
+
+Each available tool includes its `description` and a `parameters` list so AI agents can introspect what arguments to pass without an extra round-trip. Blocked tools show `name` and `description` only — `parameters` is omitted because the tool cannot be called. Circuit breaker state (`closed`, `open`, or `half_open`) and the current failure count are reported per server.
+
+Only safe fields are returned — `headers`, `auth`, and other internal config are never included. The endpoint is protected by inbound bearer auth when enabled (it exposes server topology).
+
+---
+
+## Persistent state (Redis)
+
+By default rate limit counters are stored in-process memory and reset on restart. For multi-instance deployments or persistent quotas, switch to the Redis backend:
+
+```bash
+pip3 install mcp-relay[redis]
+```
+
+```bash
+# .env
+export STATE_BACKEND=redis
+export REDIS_URL=redis://localhost:6379
+```
+
+| `STATE_BACKEND` | Behaviour |
+|-----------------|-----------|
+| `memory` (default) | In-process dict — zero deps, resets on restart, single instance only |
+| `redis` | Atomic Redis counters — persists across restarts, safe across multiple instances |
+
+Rate limit keys are namespaced as `mcp_relay:ratelimit:{server}:{date}` and automatically expire at midnight so daily quotas reset without any manual intervention.
 
 ---
 
@@ -449,6 +674,8 @@ Metrics are in-memory and reset on restart. For persistent metrics, scrape `/met
 | `PORT` | `8080` | Port the relay listens on |
 | `SECRET_BACKEND` | `env` | Secret resolution backend |
 | `LOG_FORMAT` | `json` | Log format — `json` for structured output, `text` for human-readable |
+| `STATE_BACKEND` | `memory` | State backend for rate limit counters — `memory` or `redis` |
+| `REDIS_URL` | `redis://localhost:6379` | Required when `STATE_BACKEND=redis` |
 | `GCP_PROJECT_ID` | — | Required when `SECRET_BACKEND=gcp` |
 | `AWS_REGION` | — | Required when `SECRET_BACKEND=aws` |
 | `AZURE_KEYVAULT_URL` | — | Required when `SECRET_BACKEND=azure` |
@@ -462,11 +689,48 @@ Copy `.env.example` to `.env` for a full reference.
 
 ## Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health probe — `{"status":"ok","service":"mcp-relay"}` |
-| `GET` | `/metrics` | In-memory metrics snapshot — counters, gauges, histograms |
-| `GET` | `/sse` | MCP SSE transport — connect your LLM client here |
+| Method | Path | Auth-exempt | Description |
+|--------|------|-------------|-------------|
+| `GET` | `/health` | Yes | Relay health + per-upstream status — `ok` or `degraded` |
+| `GET` | `/metrics` | Yes | In-memory metrics snapshot — counters, gauges, histograms |
+| `GET` | `/registry` | No | Server and tool inventory — available tools, blocked tools, per-server counts |
+| `GET` | `/sse` | No | MCP SSE transport — connect your LLM client here |
+
+"Auth-exempt" means the endpoint is reachable without a bearer token even when `inbound_auth.type: bearer` is configured, so load-balancer probes and monitoring systems always succeed.
+
+### /health response
+
+`GET /health` always returns HTTP `200`. Read the `status` field to distinguish healthy from degraded (a `503` would incorrectly pull the relay out of load-balancer rotation when only one upstream is down).
+
+```json
+{
+  "status": "degraded",
+  "service": "mcp-relay",
+  "upstreams": [
+    {
+      "name": "alpha_vantage",
+      "status": "ok",
+      "session": "connected",
+      "circuit_breaker": "closed"
+    },
+    {
+      "name": "slow_api",
+      "status": "degraded",
+      "session": "connected",
+      "circuit_breaker": "open"
+    }
+  ]
+}
+```
+
+| `status` | Meaning |
+|----------|---------|
+| `ok` | Session connected and circuit closed |
+| `degraded` | Circuit open or half-open (upstream failing) |
+| `connecting` | Pool is (re)connecting after a drop |
+| `disabled` | Server is `enabled: false` in config |
+
+The overall `status` is `ok` only when every enabled upstream reports `ok`. Disabled servers are ignored in the aggregate.
 
 ---
 

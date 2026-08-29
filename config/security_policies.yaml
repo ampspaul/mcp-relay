@@ -2,19 +2,85 @@
 # config/security_policies.yaml — Global security policies for mcp-relay
 # =============================================================================
 #
-# TOOL BLOCKLIST
+# GLOBAL TOOL BLOCKLIST
 #   Tools listed here are never exposed to the LLM client, regardless of which
 #   upstream server provides them. Matches against the upstream tool name
 #   (before any tool_prefix is applied).
 #
-#   Use this to suppress dangerous, irrelevant, or overly privileged tools
-#   without having to disable the entire upstream server.
+#   This is a security kill-switch — use it for tools that are dangerous
+#   everywhere (e.g. delete_account, drop_table).
+#
+#   To block tools on a specific server only, add tool_blocklist under that
+#   server's entry in config/remote_servers.yaml instead.
 #
 # Example:
 #   tool_blocklist:
 #     - delete_account
 #     - drop_table
-#     - admin_reset
 # =============================================================================
 
-tool_blocklist: []
+# =============================================================================
+# DYNAMIC TOOL DISCOVERY
+#   How often (in seconds) to re-query upstream servers for new or removed tools.
+#   Set to 0 to disable — tools are only discovered at startup (default).
+#
+#   When enabled, the relay picks up tool additions/removals without restart.
+#   Values under 60 are not recommended — each cycle opens a session to every
+#   enabled upstream server.
+#
+# Example:
+#   tool_refresh_interval_seconds: 300   # refresh every 5 minutes
+# =============================================================================
+
+tool_refresh_interval_seconds: 0
+
+# =============================================================================
+# PER-CALL TIMEOUT
+#   Maximum seconds to wait for a single upstream tool call (session open +
+#   response). Requests that exceed this are cancelled and counted as failures
+#   toward the circuit breaker threshold.
+#   Override per server with tool_call_timeout_seconds in remote_servers.yaml.
+# =============================================================================
+
+tool_call_timeout_seconds: 30
+
+# =============================================================================
+# CIRCUIT BREAKER
+#   Stops cascading failures when an upstream server is slow or unreachable.
+#
+#   failure_threshold      — consecutive failures before opening the circuit
+#   recovery_timeout_seconds — how long to wait before probing again (HALF_OPEN)
+#   success_threshold      — successful probes needed to return to CLOSED
+#
+#   Override per server with a circuit_breaker: block in remote_servers.yaml.
+# =============================================================================
+
+circuit_breaker:
+  failure_threshold: 5
+  recovery_timeout_seconds: 60
+  success_threshold: 1
+
+tool_blocklist: ["SUGAR"]
+
+# =============================================================================
+# INBOUND AUTHENTICATION
+#   Controls who can connect to the relay's SSE endpoint.
+#
+#   type: none    — no auth (default) — suitable for local dev or trusted networks
+#   type: bearer  — requires  Authorization: Bearer <token>  on every request
+#                   except /health and /metrics
+#
+#   tokens is a list of valid bearer tokens.
+#   Use secret:: references so real values are never stored in this file.
+#
+# Example:
+#   inbound_auth:
+#     type: bearer
+#     tokens:
+#       - "secret::relay-api-key-1"
+#       - "secret::relay-api-key-2"
+# =============================================================================
+
+inbound_auth:
+  type: none
+  tokens: []

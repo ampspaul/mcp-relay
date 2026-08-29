@@ -2,11 +2,32 @@ name: Security
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Monday at 08:00 UTC to catch newly disclosed CVEs
+    - cron: "0 8 * * 1"
 
 jobs:
-  test:
+  audit:
+    name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit dependencies
+        # Audits all packages that would be installed with the full extras set.
+        # pip-audit exits non-zero if any known CVE is found.
+        run: |
+          pip install -e ".[dev,redis]" --quiet
+          pip-audit
