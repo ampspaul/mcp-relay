@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 import re
 
+from ..observability import metrics
+
 logger = logging.getLogger(__name__)
 
 _INJECTION_PATTERNS: list[tuple[re.Pattern, str]] = [
@@ -32,6 +34,7 @@ def check(text: str, server_name: str) -> None:
                 "[security] %s: prompt injection detected pattern=%r near: ...%s...",
                 server_name, label, snippet,
             )
+            metrics.increment("injection_blocked_total", server=server_name, pattern=label)
             raise RuntimeError(
                 f"[{server_name}] tool response blocked — prompt injection attempt "
                 f"detected (pattern={label!r}). Response discarded for safety."

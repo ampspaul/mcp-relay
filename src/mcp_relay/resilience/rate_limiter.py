@@ -4,6 +4,8 @@ import datetime
 import logging
 from typing import Any
 
+from ..observability import metrics
+
 logger = logging.getLogger(__name__)
 
 _rate_counters: dict[str, tuple[datetime.date, int]] = {}
@@ -19,6 +21,7 @@ def check(server_cfg: dict) -> None:
     if date != today:
         date, count = today, 0
     if count >= limit:
+        metrics.increment("rate_limit_exceeded_total", server=name)
         raise RuntimeError(
             f"[{name}] daily quota of {limit} request(s) per day exhausted. "
             "Try again tomorrow or upgrade your API plan."
@@ -36,4 +39,5 @@ def check_response(server_cfg: dict, parsed: Any) -> None:
             name = server_cfg["name"]
             msg = str(parsed[key])[:300]
             logger.warning("[resilience] %s: rate-limit signal detected (key=%r): %s", name, key, msg)
+            metrics.increment("rate_limit_signal_total", server=name)
             raise RuntimeError(f"[{name}] rate limit reached — {msg}")

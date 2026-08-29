@@ -14,6 +14,6 @@ async def discover(server_cfg: dict) -> list:
             result = await session.list_tools()
         logger.info("[registry] %s: discovered %d tool(s)", name, len(result.tools))
         return result.tools
-    except Exception:
-        logger.error("[registry] %s: tool discovery failed — server will be skipped", name)
+    except Exception as exc:
+        logger.error("[registry] %s: tool discovery failed — %s", name, exc, exc_info=True)
         return []

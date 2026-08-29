@@ -17,6 +17,8 @@ LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Serve
 - **Six auth patterns** — none, query param, URL path, custom header, bearer token, OAuth2 client credentials
 - **Pluggable secrets** — env vars (default), GCP Secret Manager, AWS Secrets Manager, Azure Key Vault, HashiCorp Vault
 - **Security pipeline** — input/output sanitization, PII redaction (regex + optional Ollama LLM), prompt-injection detection
+- **Tool blocklist** — globally suppress specific upstream tools via `config/security_policies.yaml`
+- **Observability** — structured JSON logging and in-memory metrics exposed at `/metrics`
 - **Rate limiting** — per-server daily quota with response-signal detection
 - **Token caching** — OAuth2 tokens and resolved credentials cached in-memory (5-min TTL)
 - **Non-root container** — multi-stage Dockerfile, runs as uid 1000
@@ -50,12 +52,13 @@ mcp-relay/
 │   ├── config/             # typed config models and YAML loader
 │   ├── api/                # HTTP endpoints (health, admin)
 │   ├── middleware/         # Starlette middleware stubs
-│   ├── observability/      # logging, metrics, tracing stubs
+│   ├── observability/      # structured JSON logging and in-memory metrics
 │   ├── exceptions/
 │   └── models/
 ├── config/
-│   ├── remote_servers.yaml     # upstream server definitions (git-ignored)
-│   ├── security_policies.yaml
+│   ├── remote_servers.yaml         # upstream server definitions (git-ignored)
+│   ├── remote_servers.examples.yaml  # auth pattern reference — copy to get started
+│   ├── security_policies.yaml      # global tool blocklist and future policy rules
 │   └── logging.yaml
 ├── tests/
 │   ├── unit/
@@ -73,7 +76,7 @@ mcp-relay/
 
 ## Quick start
 
-### Docker Compose (recommended)
+### Docker Compose
 
 ```bash
 # 1. Clone
@@ -81,12 +84,12 @@ git clone https://github.com/ampspaul/mcp-relay.git
 cd mcp-relay
 
 # 2. Configure upstream servers
-cp config/remote_servers.yaml config/remote_servers.local.yaml
+cp config/remote_servers.examples.yaml config/remote_servers.yaml
 # Edit config/remote_servers.yaml — add your upstream MCP servers
 
-# 3. Set environment
+# 3. Set up secrets
 cp .env.example .env
-# Edit .env with your secrets
+# Edit .env with your API keys
 
 # 4. Start
 docker compose up -d
@@ -98,23 +101,49 @@ curl http://localhost:8080/health
 
 ### Run locally
 
+**Prerequisites:** Python 3.10+
+
 ```bash
-pip install -e .
+# 1. Clone
+git clone https://github.com/ampspaul/mcp-relay.git
+cd mcp-relay
+
+# 2. Install dependencies
+pip3 install -e .
+
+# 3. Configure upstream servers
+#    Add your real MCP server URLs and secret references.
+#    See config/remote_servers.examples.yaml for all auth patterns.
+cp config/remote_servers.examples.yaml config/remote_servers.yaml
 # Edit config/remote_servers.yaml
 
-export SECRET_BACKEND=env
-export MY_API_KEY=your-actual-key-here
-python -m mcp_relay.main
+# 4. Set up secrets
+cp .env.example .env
+# Edit .env — add your API keys, e.g.:
+#   export MY_API_KEY=your-actual-key-here
+
+# 5. Start the relay
+source .env && make run
 ```
 
-Or use the Makefile:
+The relay will connect to each configured server, discover their tools, and
+register them as proxy tools. You'll see a line like:
+
+```
+[mcp_relay] ready — 133 remote tool(s) registered across all servers
+```
 
 ```bash
-make dev    # install with dev extras
-make run    # start the relay
+# 6. Verify
+curl http://localhost:8080/health
+# → {"status":"ok","service":"mcp-relay"}
 ```
 
-The SSE endpoint is at `http://localhost:8080/sse`.
+The SSE endpoint your LLM client connects to is `http://localhost:8080/sse`.
+
+> **Note on secrets:** `.env` uses `export` so that vars are passed to child
+> processes when you run `source .env`. Without `export`, `source .env` sets
+> vars only in your current shell and the relay subprocess won't see them.
 
 ---
 
@@ -323,12 +352,103 @@ If Ollama is unreachable or times out, the pipeline falls back to regex — no r
 
 ---
 
+## config/security_policies.yaml reference
+
+`config/security_policies.yaml` holds global security rules that apply across all upstream servers.
+
+### Tool blocklist
+
+Prevent specific upstream tools from ever being exposed to the LLM client, regardless of which server provides them. Matches against the **upstream tool name** (before any `tool_prefix` is applied).
+
+```yaml
+tool_blocklist:
+  - delete_account   # never expose destructive ops
+  - drop_table
+  - admin_reset
+```
+
+The relay logs each blocked tool at startup:
+
+```
+[registry] alpha_vantage: tool 'admin_reset' blocked by security_policies.yaml
+```
+
+Use this to:
+- Lock out dangerous or privileged tools from a server you don't fully control
+- Trim a large upstream tool list down to only what your app needs
+- Enforce a consistent policy across multiple servers without editing each one individually
+
+> **Note:** `tool_blocklist: []` (the default) means no tools are blocked.
+
+---
+
+## Observability
+
+### Structured logging
+
+By default the relay emits structured JSON logs, one object per line — easy to ship to Datadog, CloudWatch, or any log aggregator:
+
+```json
+{"ts": "2026-08-29T09:00:26Z", "level": "INFO", "logger": "mcp_relay.registry.server_registry", "msg": "[registry] alpha_vantage: 133 proxy tool(s) registered (prefix='')"}
+{"ts": "2026-08-29T09:00:27Z", "level": "INFO", "logger": "mcp_relay.registry.server_registry", "msg": "[registry] alpha_vantage: calling tool=TIME_SERIES_DAILY args_keys=['symbol']"}
+```
+
+Set `LOG_FORMAT=text` for human-readable output during local development:
+
+```bash
+export LOG_FORMAT=text
+source .env && make run
+```
+
+### Metrics endpoint
+
+The relay tracks in-memory metrics and exposes them at `GET /metrics`:
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+```json
+{
+  "counters": {
+    "tool_calls_total{server=alpha_vantage,tool=TIME_SERIES_DAILY}": 4,
+    "tool_errors_total{server=alpha_vantage,type=transport}": 1,
+    "rate_limit_exceeded_total{server=alpha_vantage}": 0,
+    "rate_limit_signal_total{server=alpha_vantage}": 0,
+    "injection_blocked_total{server=alpha_vantage,pattern=jailbreak}": 0
+  },
+  "gauges": {
+    "tools_registered{server=alpha_vantage}": 133.0
+  },
+  "histograms": {
+    "tool_call_duration_seconds{server=alpha_vantage}": {
+      "count": 4, "sum": 1.2, "min": 0.18, "max": 0.55, "avg": 0.3
+    }
+  }
+}
+```
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `tool_calls_total` | counter | Total calls, labelled by server and tool name |
+| `tool_errors_total` | counter | Failures by type: `transport` or `tool_error` |
+| `tools_registered` | gauge | Tools discovered per server at startup |
+| `tool_call_duration_seconds` | histogram | Latency per server — min, max, avg, sum, count |
+| `rate_limit_exceeded_total` | counter | Daily quota exhausted, per server |
+| `rate_limit_signal_total` | counter | API-signalled rate limits (e.g. `Note` key in response), per server |
+| `injection_blocked_total` | counter | Blocked responses per server and injection pattern |
+
+Metrics are in-memory and reset on restart. For persistent metrics, scrape `/metrics` with a cron job or sidecar and push to your preferred store.
+
+---
+
 ## Environment variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | `8080` | Port the relay listens on |
 | `SECRET_BACKEND` | `env` | Secret resolution backend |
+| `LOG_FORMAT` | `json` | Log format — `json` for structured output, `text` for human-readable |
 | `GCP_PROJECT_ID` | — | Required when `SECRET_BACKEND=gcp` |
 | `AWS_REGION` | — | Required when `SECRET_BACKEND=aws` |
 | `AZURE_KEYVAULT_URL` | — | Required when `SECRET_BACKEND=azure` |
@@ -345,6 +465,7 @@ Copy `.env.example` to `.env` for a full reference.
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health probe — `{"status":"ok","service":"mcp-relay"}` |
+| `GET` | `/metrics` | In-memory metrics snapshot — counters, gauges, histograms |
 | `GET` | `/sse` | MCP SSE transport — connect your LLM client here |
 
 ---
@@ -433,10 +554,10 @@ make docker-run
 Manual equivalents:
 
 ```bash
-pip install -e ".[dev]"
+pip3 install -e ".[dev]"
 ruff check src/ tests/
 mypy src/
-pytest tests/
+python3 -m pytest tests/
 ```
 
 ---

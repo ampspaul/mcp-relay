@@ -14,8 +14,11 @@ from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 from .server import mcp, init_remote_servers
 from .api.health import health
+from .api.metrics_endpoint import metrics_handler
+from .observability.logging import configure as configure_logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -32,6 +35,7 @@ def build_app() -> Starlette:
     return Starlette(
         routes=[
             Route("/health", health),
+            Route("/metrics", metrics_handler),
             Mount("/", app=mcp.sse_app()),
         ],
         lifespan=_lifespan,

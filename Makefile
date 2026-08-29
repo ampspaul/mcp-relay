@@ -1,20 +1,20 @@
 .PHONY: install dev lint test run docker-build docker-run
 
 install:
-	pip install -e .
+	pip3 install -e .
 
 dev:
-	pip install -e ".[dev]"
+	pip3 install -e ".[dev]"
 
 lint:
 	ruff check src/ tests/
 	mypy src/
 
 test:
-	pytest tests/
+	python3 -m pytest tests/
 
 run:
-	python -m mcp_relay.main
+	python3 -m mcp_relay.main
 
 docker-build:
 	docker build -t mcp-relay .

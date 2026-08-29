@@ -29,145 +29,34 @@
 #   api_key_header           — sends a custom HTTP header
 #   bearer                   — sends Authorization: Bearer <value>
 #   oauth2_client_credentials — fetches and caches a token from token_url
+#
+# See config/remote_servers.examples.yaml for all auth pattern examples.
 # =============================================================================
 
 servers:
 
-  # ---------------------------------------------------------------------------
-  # Pattern 1: No authentication — public server
-  # ---------------------------------------------------------------------------
-  - name: public-weather-server
-    description: "Public weather MCP server — no credentials required"
-    url: "https://weather.example.com/mcp"
-    transport: sse              # sse (default) or streamable_http
-    enabled: true
-    auth:
-      type: none
-    sanitize_input: true
-    sanitize_output: true
-    redact_pii: false
-    pii_scan_enabled: false
-    injection_detection: false
-    rate_limit:
-      requests_per_day: 500
-
-  # ---------------------------------------------------------------------------
-  # Pattern 2: API key passed as a query parameter
-  # ---------------------------------------------------------------------------
-  - name: maps-server-query-param
-    description: "Mapping service that expects ?api_key=<TOKEN> in the URL"
-    url: "https://maps.example.com/mcp"
+  - name: alpha_vantage
+    display_name: "Alpha Vantage Financial Data"
+    url: "https://mcp.alphavantage.co/mcp"
+    transport: streamable_http
     auth:
       type: api_key_query
-      param_name: api_key       # name of the query-string parameter (default: apikey)
-      value: "secret::maps-api-key"
-    sanitize_input: true
-    sanitize_output: false
-    redact_pii: false
-    pii_scan_enabled: false
-    injection_detection: true
-    rate_limit:
-      requests_per_day: 1000
-
-  # ---------------------------------------------------------------------------
-  # Pattern 3: API key embedded in the URL path
-  # ---------------------------------------------------------------------------
-  - name: translation-server-path-key
-    description: "Translation service with the API key baked into the URL path"
-    url: "https://translate.example.com/{api_key}/mcp"
-    auth:
-      type: api_key_url_path
-      placeholder: "{api_key}"  # placeholder in the URL above (default: {api_key})
-      value: "secret::translate-api-key"
-    sanitize_input: true
+      param_name: apikey
+      value: "secret::alpha-vantage-api-key"
+    tool_prefix: ""
+    enabled: true
     sanitize_output: true
     redact_pii: true
-    pii_scan_enabled: false
+    sanitize_input: false
     injection_detection: false
-    rate_limit:
-      requests_per_day: 0       # 0 = no limit
-
-  # ---------------------------------------------------------------------------
-  # Pattern 4: API key sent as a custom HTTP header
-  # ---------------------------------------------------------------------------
-  - name: search-server-header-key
-    description: "Enterprise search MCP server using a custom X-API-Key header"
-    url: "https://search.example.com/mcp"
-    auth:
-      type: api_key_header
-      header_name: "X-API-Key"  # HTTP header name (default: X-Api-Key)
-      value: "secret::search-api-key"
-    sanitize_input: true
-    sanitize_output: true
-    redact_pii: false
     pii_scan_enabled: false
-    injection_detection: true
+    pii_scan_model: "llama3.2"
     rate_limit:
-      requests_per_day: 2000
-
-  # ---------------------------------------------------------------------------
-  # Pattern 5: Bearer token in the Authorization header
-  # ---------------------------------------------------------------------------
-  - name: github-mcp-server
-    description: "GitHub MCP server authenticated with a Personal Access Token"
-    url: "https://api.github.com/mcp"
-    auth:
-      type: bearer
-      value: "secret::github-pat"   # sent as:  Authorization: Bearer <value>
-    sanitize_input: true
-    sanitize_output: false
-    redact_pii: false
-    pii_scan_enabled: false
-    injection_detection: true
-    rate_limit:
-      requests_per_day: 200     # GitHub enforces strict rate limits
-
-  # ---------------------------------------------------------------------------
-  # Pattern 6: OAuth2 client credentials flow
-  # ---------------------------------------------------------------------------
-  - name: enterprise-erp-server
+      requests_per_day: 25
+      response_signal_keys: ["Note", "Information"]
     description: >
-      ERP system using OAuth2 client credentials grant.
-      The relay fetches and caches a Bearer token automatically,
-      refreshing it before expiry.
-    url: "https://erp.example.com/mcp"
-    auth:
-      type: oauth2_client_credentials
-      token_url: "https://auth.example.com/oauth/token"
-      client_id: "secret::erp-client-id"
-      client_secret: "secret::erp-client-secret"
-      scope: "mcp.read mcp.write"     # space-separated scopes (optional)
-      audience: "https://erp.example.com"  # required by some IdPs, e.g. Auth0
-    sanitize_input: true
-    sanitize_output: true
-    redact_pii: true
-    pii_scan_enabled: false
-    injection_detection: true
-    rate_limit:
-      requests_per_day: 500
-
-  # ---------------------------------------------------------------------------
-  # Pattern 7: All security controls enabled
-  # ---------------------------------------------------------------------------
-  - name: high-security-finance-server
-    description: >
-      High-security financial data MCP server.
-      All protection flags enabled simultaneously.
-    url: "https://finance.example.com/mcp"
-    auth:
-      type: bearer
-      value: "secret::finance-bearer-token"
-    sanitize_input: true
-    sanitize_output: true
-    redact_pii: true
-    pii_scan_enabled: true
-    pii_scan_model: "llama3.2"        # requires OLLAMA_URL env var
-    injection_detection: true
-    rate_limit:
-      requests_per_day: 100
-      response_signal_keys:           # treat these JSON keys as rate-limit signals
-        - "Note"
-        - "Information"
+      Real-time quotes, historical OHLCV, technical indicators (RSI, MACD),
+      company fundamentals, earnings history, and symbol search.
 
 # =============================================================================
 # NOTES

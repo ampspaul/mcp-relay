@@ -1,1 +1,20 @@
-# Security policy definitions — see docs/security.md
+# =============================================================================
+# config/security_policies.yaml — Global security policies for mcp-relay
+# =============================================================================
+#
+# TOOL BLOCKLIST
+#   Tools listed here are never exposed to the LLM client, regardless of which
+#   upstream server provides them. Matches against the upstream tool name
+#   (before any tool_prefix is applied).
+#
+#   Use this to suppress dangerous, irrelevant, or overly privileged tools
+#   without having to disable the entire upstream server.
+#
+# Example:
+#   tool_blocklist:
+#     - delete_account
+#     - drop_table
+#     - admin_reset
+# =============================================================================
+
+tool_blocklist: []

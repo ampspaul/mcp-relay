@@ -21,3 +21,14 @@ async def load_servers(config_path: Path) -> list[dict]:
     servers: list[dict] = await anyio.to_thread.run_sync(_read)
     logger.info("[config] loaded %d server(s)", len(servers))
     return servers
+
+
+async def load_security_policies(config_path: Path) -> dict:
+    if not config_path.exists():
+        return {}
+
+    def _read() -> dict:
+        with config_path.open() as fh:
+            return yaml.safe_load(fh) or {}
+
+    return await anyio.to_thread.run_sync(_read)

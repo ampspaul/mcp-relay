@@ -1,1 +1,1 @@
-"""Observability stack — structured logging, metrics, and tracing."""
+"""Observability stack — structured logging and metrics."""

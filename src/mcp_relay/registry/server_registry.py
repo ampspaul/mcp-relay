@@ -5,19 +5,25 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import time
+
 import anyio
 import yaml
 
 from ..transport.session import open_session, safe_exc_msg
 from ..security import secret_redactor, pii_redactor, prompt_injection
 from ..resilience import rate_limiter
+from ..config.loader import load_security_policies
+from ..observability import metrics
 from .tool_discovery import discover
 from .proxy_builder import build
 
 logger = logging.getLogger(__name__)
 
 # src/mcp_relay/registry/ → src/mcp_relay/ → src/ → project root → config/
-_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "config" / "remote_servers.yaml"
+_CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "config"
+_CONFIG_PATH = _CONFIG_DIR / "remote_servers.yaml"
+_POLICIES_PATH = _CONFIG_DIR / "security_policies.yaml"
 
 
 async def _load_servers() -> list[dict]:
@@ -38,56 +44,70 @@ async def _load_servers() -> list[dict]:
 async def call_tool(server_cfg: dict, tool_name: str, arguments: dict) -> Any:
     name = server_cfg["name"]
     logger.info("[registry] %s: calling tool=%s args_keys=%s", name, tool_name, list(arguments.keys()))
-    rate_limiter.check(server_cfg)
-    if server_cfg.get("sanitize_input"):
-        arguments = pii_redactor.sanitize_args(arguments)
+    metrics.increment("tool_calls_total", server=name, tool=tool_name)
+    t0 = time.perf_counter()
 
     try:
-        async with open_session(server_cfg) as session:
-            result = await session.call_tool(tool_name, arguments)
-    except RuntimeError:
-        raise
-    except Exception as exc:
-        msg = safe_exc_msg(exc)
-        logger.error("[registry] %s: tool call failed (tool=%s): %s", name, tool_name, msg)
-        raise RuntimeError(f"[{name}] remote tool {tool_name!r} transport error: {msg}") from None
+        rate_limiter.check(server_cfg)
+        if server_cfg.get("sanitize_input"):
+            arguments = pii_redactor.sanitize_args(arguments)
 
-    if getattr(result, "isError", False):
-        error_text = "unknown error"
-        if result.content and hasattr(result.content[0], "text"):
-            error_text = result.content[0].text
-        safe_text = secret_redactor.redact(error_text)
-        logger.error("[registry] %s: tool=%s returned isError=True: %s", name, tool_name, safe_text[:200])
-        raise RuntimeError(f"[{name}] remote tool {tool_name!r} failed: {safe_text}")
+        try:
+            async with open_session(server_cfg) as session:
+                result = await session.call_tool(tool_name, arguments)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            msg = safe_exc_msg(exc)
+            logger.error("[registry] %s: tool call failed (tool=%s): %s", name, tool_name, msg)
+            metrics.increment("tool_errors_total", server=name, type="transport")
+            raise RuntimeError(f"[{name}] remote tool {tool_name!r} transport error: {msg}") from None
 
-    if not result.content:
+        if getattr(result, "isError", False):
+            error_text = "unknown error"
+            if result.content and hasattr(result.content[0], "text"):
+                error_text = result.content[0].text
+            safe_text = secret_redactor.redact(error_text)
+            logger.error("[registry] %s: tool=%s returned isError=True: %s", name, tool_name, safe_text[:200])
+            metrics.increment("tool_errors_total", server=name, type="tool_error")
+            raise RuntimeError(f"[{name}] remote tool {tool_name!r} failed: {safe_text}")
+
+        if not result.content:
+            return {}
+
+        first = result.content[0]
+        if hasattr(first, "text"):
+            raw = first.text
+            if server_cfg.get("sanitize_output"):
+                raw = secret_redactor.redact(raw)
+            if server_cfg.get("redact_pii"):
+                raw = pii_redactor.redact(raw)
+            if server_cfg.get("pii_scan_enabled", False) and (pii_model := server_cfg.get("pii_scan_model")):
+                raw = await pii_redactor.llm_redact(raw, pii_model)
+            if server_cfg.get("injection_detection", False):
+                prompt_injection.check(raw, name)
+            try:
+                parsed = json.loads(raw)
+                rate_limiter.check_response(server_cfg, parsed)
+                return parsed
+            except (json.JSONDecodeError, TypeError):
+                return raw
+
+        if hasattr(first, "data"):
+            return first.data
         return {}
 
-    first = result.content[0]
-    if hasattr(first, "text"):
-        raw = first.text
-        if server_cfg.get("sanitize_output"):
-            raw = secret_redactor.redact(raw)
-        if server_cfg.get("redact_pii"):
-            raw = pii_redactor.redact(raw)
-        if server_cfg.get("pii_scan_enabled", False) and (pii_model := server_cfg.get("pii_scan_model")):
-            raw = await pii_redactor.llm_redact(raw, pii_model)
-        if server_cfg.get("injection_detection", False):
-            prompt_injection.check(raw, name)
-        try:
-            parsed = json.loads(raw)
-            rate_limiter.check_response(server_cfg, parsed)
-            return parsed
-        except (json.JSONDecodeError, TypeError):
-            return raw
-
-    if hasattr(first, "data"):
-        return first.data
-    return {}
+    finally:
+        metrics.observe("tool_call_duration_seconds", time.perf_counter() - t0, server=name)
 
 
 async def register_all(mcp: Any) -> int:
     configs = await _load_servers()
+    policies = await load_security_policies(_POLICIES_PATH)
+    blocklist: set[str] = set(policies.get("tool_blocklist") or [])
+    if blocklist:
+        logger.info("[registry] tool blocklist active: %d tool(s) blocked", len(blocklist))
+
     total = 0
     enabled_count = 0
     registered_names: set[str] = set()
@@ -108,6 +128,10 @@ async def register_all(mcp: Any) -> int:
 
         registered_this = 0
         for tool in tools:
+            if tool.name in blocklist:
+                logger.info("[registry] %s: tool %r blocked by security_policies.yaml", name, tool.name)
+                continue
+
             proxy_name = f"{prefix}{tool.name}" if prefix else tool.name
             if proxy_name in registered_names:
                 logger.error(
@@ -127,6 +151,7 @@ async def register_all(mcp: Any) -> int:
             total += 1
             registered_this += 1
 
+        metrics.gauge("tools_registered", float(registered_this), server=name)
         logger.info("[registry] %s: %d proxy tool(s) registered (prefix=%r)", name, registered_this, prefix)
 
     if enabled_count > 0 and total == 0:
