@@ -3,13 +3,19 @@
 # ============================================================
 
 # -----------------------------------------------------------
-# SECURITY: Never commit live secrets/config files (FR-16)
+# SECURITY: Never commit live secrets/config files
 # -----------------------------------------------------------
-remote_servers.yaml
+# Ignore any remote_servers.yaml that contains real secrets.
+# The committed config/remote_servers.yaml is an example only —
+# do not populate it with real credentials.
+/remote_servers.yaml
 secrets.yaml
 .env
 .env.*
 !.env.example
+# Allow the example configs that ship with the repo
+!config/remote_servers.yaml
+!tests/fixtures/remote_servers.yaml
 
 # -----------------------------------------------------------
 # Python
