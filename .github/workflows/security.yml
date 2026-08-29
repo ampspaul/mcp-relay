@@ -22,12 +22,12 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install pip-audit
-        run: pip install pip-audit
+      - name: Install pip-audit and upgrade build tools
+        run: pip install --upgrade pip setuptools pip-audit
 
       - name: Audit dependencies
-        # Audits all packages that would be installed with the full extras set.
-        # pip-audit exits non-zero if any known CVE is found.
+        # --skip-editable omits mcp-relay itself (local package, not on PyPI).
+        # Audits all third-party packages installed with the full extras set.
         run: |
           pip install -e ".[dev,redis]" --quiet
-          pip-audit
+          pip-audit --skip-editable
