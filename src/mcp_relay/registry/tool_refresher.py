@@ -65,8 +65,9 @@ async def _refresh_once(mcp: Any) -> None:
                 proxy_fn = build(cfg, tool.name, schema, call_tool)
                 proxy_fn.__name__ = proxy_name
                 proxy_fn.__qualname__ = proxy_name
-                if mcp._tool_manager.get_tool(proxy_name) is None:
-                    mcp.add_tool(proxy_fn, name=proxy_name, description=tool.description or "")
+                if await mcp.local_provider.get_tool(proxy_name) is None:
+                    proxy_fn.__doc__ = tool.description or ""
+                    mcp.local_provider.add_tool(proxy_fn)
                     _tool_metadata[proxy_name] = {
                         "description": tool.description or "",
                         "parameters": _parse_parameters(schema),
@@ -76,13 +77,12 @@ async def _refresh_once(mcp: Any) -> None:
                     metrics.increment("tools_added_total", server=name)
                     logger.info("[refresher] %s: added tool %r", name, proxy_name)
 
-        # Remove tools that disappeared from upstream.
-        # FastMCP 2.x has no public remove_tool() API; _tools is the backing
-        # dict on ToolManager.  Pinned to fastmcp<3 in pyproject.toml.
-        # When FastMCP exposes a public removal method, replace this line.
         stale = current - set(available.keys())
         for proxy_name in stale:
-            mcp._tool_manager._tools.pop(proxy_name, None)  # noqa: SLF001
+            try:
+                mcp.local_provider.remove_tool(proxy_name)
+            except KeyError:
+                pass
             _tool_metadata.pop(proxy_name, None)
             current.discard(proxy_name)
             removed += 1

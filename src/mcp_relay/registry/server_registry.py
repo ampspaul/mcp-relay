@@ -231,7 +231,8 @@ async def register_all(mcp: Any) -> int:
             proxy_fn = build(cfg, tool.name, schema, call_tool)
             proxy_fn.__name__ = proxy_name
             proxy_fn.__qualname__ = proxy_name
-            mcp.add_tool(proxy_fn, name=proxy_name, description=tool.description or "")
+            proxy_fn.__doc__ = tool.description or ""
+            mcp.local_provider.add_tool(proxy_fn)
             registered_names.add(proxy_name)
             registered_this_server.add(proxy_name)
             _tool_metadata[proxy_name] = {

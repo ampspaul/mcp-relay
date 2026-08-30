@@ -69,7 +69,7 @@ async def test_discover_returns_empty_list_on_session_error():
     @asynccontextmanager
     async def _failing_ctx(*_args, **_kwargs):
         raise ConnectionError("unreachable")
-        yield  # noqa: unreachable
+        yield
 
     cfg = {"name": "bad-srv", "url": "https://bad.example.com/mcp"}
     with patch("src.mcp_relay.registry.tool_discovery.open_session", _failing_ctx):
@@ -98,8 +98,13 @@ async def test_discover_returns_empty_list_on_empty_server():
 
 def _mcp_mock():
     mcp = MagicMock()
-    mcp.add_tool = MagicMock()
+    mcp.local_provider = MagicMock()
+    mcp.local_provider.add_tool = MagicMock()
     return mcp
+
+
+def _registered_names(mcp) -> set[str]:
+    return {call.args[0].__name__ for call in mcp.local_provider.add_tool.call_args_list}
 
 
 _EMPTY_POLICIES = AsyncMock(return_value={})
@@ -121,9 +126,8 @@ async def test_register_all_adds_tools_to_mcp():
         count = await register_all(mcp)
 
     assert count == 2
-    assert mcp.add_tool.call_count == 2
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"weather_current", "weather_forecast"}
+    assert mcp.local_provider.add_tool.call_count == 2
+    assert _registered_names(mcp) == {"weather_current", "weather_forecast"}
 
 
 @pytest.mark.asyncio
@@ -144,8 +148,7 @@ async def test_register_all_applies_tool_prefix():
         count = await register_all(mcp)
 
     assert count == 2
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"es_search", "es_index"}
+    assert _registered_names(mcp) == {"es_search", "es_index"}
 
 
 @pytest.mark.asyncio
@@ -170,7 +173,7 @@ async def test_register_all_skips_disabled_servers():
         count = await register_all(mcp)
 
     assert count == 1
-    assert mcp.add_tool.call_count == 1
+    assert mcp.local_provider.add_tool.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -197,7 +200,7 @@ async def test_register_all_skips_colliding_tool_names():
 
     # Only the first "query" is registered; the second is skipped
     assert count == 1
-    assert mcp.add_tool.call_count == 1
+    assert mcp.local_provider.add_tool.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -229,7 +232,7 @@ async def test_register_all_returns_zero_with_no_servers():
         count = await register_all(mcp)
 
     assert count == 0
-    mcp.add_tool.assert_not_called()
+    mcp.local_provider.add_tool.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -247,8 +250,8 @@ async def test_register_all_tool_description_forwarded():
 
         await register_all(mcp)
 
-    call_kwargs = mcp.add_tool.call_args.kwargs
-    assert call_kwargs["description"] == "Does the thing"
+    registered_fn = mcp.local_provider.add_tool.call_args.args[0]
+    assert registered_fn.__doc__ == "Does the thing"
 
 
 # ── tool blocklist ────────────────────────────────────────────────────────────
@@ -271,9 +274,7 @@ async def test_blocklist_skips_blocked_tool():
         count = await register_all(mcp)
 
     assert count == 1
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"safe_tool"}
-    assert "dangerous_tool" not in registered_names
+    assert _registered_names(mcp) == {"safe_tool"}
 
 
 @pytest.mark.asyncio
@@ -296,8 +297,7 @@ async def test_blocklist_matches_original_tool_name_not_prefix():
         count = await register_all(mcp)
 
     assert count == 1
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"fin_query"}
+    assert _registered_names(mcp) == {"fin_query"}
 
 
 @pytest.mark.asyncio
@@ -324,9 +324,7 @@ async def test_blocklist_blocks_across_all_servers():
         count = await register_all(mcp)
 
     assert count == 2
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"read", "write"}
-    assert "drop_table" not in registered_names
+    assert _registered_names(mcp) == {"read", "write"}
 
 
 @pytest.mark.asyncio
@@ -374,8 +372,7 @@ async def test_per_server_blocklist_blocks_tool_on_that_server():
         count = await register_all(mcp)
 
     assert count == 1
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"safe_tool"}
+    assert _registered_names(mcp) == {"safe_tool"}
 
 
 @pytest.mark.asyncio
@@ -401,12 +398,12 @@ async def test_per_server_blocklist_does_not_affect_other_servers():
 
         await register_all(mcp)
 
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
+    names = _registered_names(mcp)
     # srv-a: shared_tool only (local_only blocked); srv-b: both with prefix
-    assert "shared_tool" in registered_names
-    assert "local_only" not in registered_names
-    assert "b_shared_tool" in registered_names
-    assert "b_local_only" in registered_names
+    assert "shared_tool" in names
+    assert "local_only" not in names
+    assert "b_shared_tool" in names
+    assert "b_local_only" in names
 
 
 @pytest.mark.asyncio
@@ -433,5 +430,4 @@ async def test_global_and_per_server_blocklists_are_combined():
         count = await register_all(mcp)
 
     assert count == 1
-    registered_names = {call.kwargs["name"] for call in mcp.add_tool.call_args_list}
-    assert registered_names == {"safe"}
+    assert _registered_names(mcp) == {"safe"}
