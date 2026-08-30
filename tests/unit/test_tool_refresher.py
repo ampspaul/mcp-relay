@@ -20,20 +20,14 @@ class _Tool:
         self.inputSchema = schema or {}
 
 
-class _FakeLocalProvider:
-    """Mirrors the FastMCP 3.x local_provider interface."""
+class _FakeLocal:
+    """Mirrors FastMCP 3.4.x mcp._local interface."""
 
     def __init__(self):
         self._tools: dict[str, Any] = {}
-        self._added: list[str] = []
 
-    async def get_tool(self, name: str):
+    async def _get_tool(self, name: str):
         return self._tools.get(name)
-
-    def add_tool(self, fn):
-        name = fn.__name__
-        self._tools[name] = MagicMock()
-        self._added.append(name)
 
     def remove_tool(self, name: str):
         if name not in self._tools:
@@ -42,10 +36,16 @@ class _FakeLocalProvider:
 
 
 class _FakeMCP:
-    """Minimal FastMCP 3.x stand-in using local_provider."""
+    """Minimal FastMCP 3.4.x stand-in: add_tool on mcp, get/remove via _local."""
 
     def __init__(self):
-        self.local_provider = _FakeLocalProvider()
+        self._local = _FakeLocal()
+        self._added: list[str] = []
+
+    def add_tool(self, fn):
+        name = fn.__name__
+        self._local._tools[name] = MagicMock()
+        self._added.append(name)
 
 
 def _cfg(name="srv", prefix="") -> dict:
@@ -94,7 +94,7 @@ async def test_refresh_adds_new_tool():
 
         await _refresh_once(mcp)
 
-    assert "get_price" in mcp.local_provider._tools
+    assert "get_price" in mcp._local._tools
     assert "get_price" in server_registry._registered["srv"]
 
 
@@ -103,14 +103,14 @@ async def test_refresh_skips_already_registered_tool():
     mcp = _FakeMCP()
     cfg = _cfg()
     server_registry._registered["srv"] = {"get_price"}
-    mcp.local_provider._tools["get_price"] = MagicMock()
+    mcp._local._tools["get_price"] = MagicMock()
 
     with _patch_load_servers([cfg]), _patch_policies(), _patch_discover([_Tool("get_price")]):
         from src.mcp_relay.registry.tool_refresher import _refresh_once
 
         await _refresh_once(mcp)
 
-    assert mcp.local_provider._added == []  # add_tool was not called
+    assert mcp._added == []  # add_tool was not called
 
 
 @pytest.mark.asyncio
@@ -123,7 +123,7 @@ async def test_refresh_applies_tool_prefix():
 
         await _refresh_once(mcp)
 
-    assert "av_quote" in mcp.local_provider._tools
+    assert "av_quote" in mcp._local._tools
 
 
 # ── _refresh_once: removing tools ─────────────────────────────────────────────
@@ -134,16 +134,16 @@ async def test_refresh_removes_stale_tool():
     mcp = _FakeMCP()
     cfg = _cfg()
     server_registry._registered["srv"] = {"old_tool", "current_tool"}
-    mcp.local_provider._tools["old_tool"] = MagicMock()
-    mcp.local_provider._tools["current_tool"] = MagicMock()
+    mcp._local._tools["old_tool"] = MagicMock()
+    mcp._local._tools["current_tool"] = MagicMock()
 
     with _patch_load_servers([cfg]), _patch_policies(), _patch_discover([_Tool("current_tool")]):
         from src.mcp_relay.registry.tool_refresher import _refresh_once
 
         await _refresh_once(mcp)
 
-    assert "old_tool" not in mcp.local_provider._tools
-    assert "current_tool" in mcp.local_provider._tools
+    assert "old_tool" not in mcp._local._tools
+    assert "current_tool" in mcp._local._tools
     assert server_registry._registered["srv"] == {"current_tool"}
 
 
@@ -152,15 +152,15 @@ async def test_refresh_removes_all_tools_when_upstream_empty():
     mcp = _FakeMCP()
     cfg = _cfg()
     server_registry._registered["srv"] = {"tool_a", "tool_b"}
-    mcp.local_provider._tools["tool_a"] = MagicMock()
-    mcp.local_provider._tools["tool_b"] = MagicMock()
+    mcp._local._tools["tool_a"] = MagicMock()
+    mcp._local._tools["tool_b"] = MagicMock()
 
     with _patch_load_servers([cfg]), _patch_policies(), _patch_discover([]):
         from src.mcp_relay.registry.tool_refresher import _refresh_once
 
         await _refresh_once(mcp)
 
-    assert mcp.local_provider._tools == {}
+    assert mcp._local._tools == {}
     assert server_registry._registered["srv"] == set()
 
 
@@ -181,8 +181,8 @@ async def test_refresh_blocked_tool_not_added():
 
         await _refresh_once(mcp)
 
-    assert "dangerous_tool" not in mcp.local_provider._tools
-    assert "safe_tool" in mcp.local_provider._tools
+    assert "dangerous_tool" not in mcp._local._tools
+    assert "safe_tool" in mcp._local._tools
 
 
 @pytest.mark.asyncio
@@ -190,7 +190,7 @@ async def test_refresh_blocked_tool_removed_if_previously_registered():
     mcp = _FakeMCP()
     cfg = _cfg()
     server_registry._registered["srv"] = {"blocked_tool"}
-    mcp.local_provider._tools["blocked_tool"] = MagicMock()
+    mcp._local._tools["blocked_tool"] = MagicMock()
 
     # upstream still returns the tool but blocklist now includes it
     with (
@@ -202,7 +202,7 @@ async def test_refresh_blocked_tool_removed_if_previously_registered():
 
         await _refresh_once(mcp)
 
-    assert "blocked_tool" not in mcp.local_provider._tools
+    assert "blocked_tool" not in mcp._local._tools
 
 
 # ── _refresh_once: per-server blocklist ──────────────────────────────────────
@@ -222,8 +222,8 @@ async def test_refresh_per_server_blocklist_blocks_tool():
 
         await _refresh_once(mcp)
 
-    assert "local_bad" not in mcp.local_provider._tools
-    assert "safe_tool" in mcp.local_provider._tools
+    assert "local_bad" not in mcp._local._tools
+    assert "safe_tool" in mcp._local._tools
 
 
 @pytest.mark.asyncio
@@ -240,9 +240,9 @@ async def test_refresh_global_and_per_server_blocklists_combined():
 
         await _refresh_once(mcp)
 
-    assert "global_bad" not in mcp.local_provider._tools
-    assert "local_bad" not in mcp.local_provider._tools
-    assert "safe_tool" in mcp.local_provider._tools
+    assert "global_bad" not in mcp._local._tools
+    assert "local_bad" not in mcp._local._tools
+    assert "safe_tool" in mcp._local._tools
 
 
 # ── _refresh_once: disabled server ────────────────────────────────────────────
@@ -294,7 +294,7 @@ async def test_refresh_increments_removed_metric():
     metrics.reset()
     mcp = _FakeMCP()
     server_registry._registered["srv"] = {"gone_tool"}
-    mcp.local_provider._tools["gone_tool"] = MagicMock()
+    mcp._local._tools["gone_tool"] = MagicMock()
 
     with _patch_load_servers([_cfg()]), _patch_policies(), _patch_discover([]):
         from src.mcp_relay.registry.tool_refresher import _refresh_once
