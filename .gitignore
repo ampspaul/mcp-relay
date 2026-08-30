@@ -122,3 +122,15 @@ logs/
 # -----------------------------------------------------------
 *.dockerignore
 docker-compose.override.yml
+
+# -----------------------------------------------------------
+# Terraform
+# -----------------------------------------------------------
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraformrc
+terraform.rc
+# Keep the dependency lock file
+!**/.terraform.lock.hcl
