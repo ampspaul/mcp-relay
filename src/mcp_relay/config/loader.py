@@ -8,6 +8,8 @@ from pathlib import Path
 import anyio
 import yaml
 
+from ..transform.response_shaper import validate_response_shape
+
 logger = logging.getLogger(__name__)
 
 _VALID_TRANSPORTS = {"sse", "streamable_http"}
@@ -50,7 +52,7 @@ def validate_servers(servers: list[dict]) -> None:
             )
 
         if auth_type in {"api_key_query", "api_key_url_path", "api_key_header", "bearer"}:
-            if not auth.get("value"):
+            if auth.get("value") is None:
                 raise ValueError(
                     f"{label}: auth.type={auth_type!r} requires 'auth.value'"
                 )
@@ -69,6 +71,12 @@ def validate_servers(servers: list[dict]) -> None:
             raise ValueError(
                 f"{label}: rate_limit.requests_per_day must be a non-negative integer"
             )
+
+        rs = srv.get("response_shape")
+        if rs is not None:
+            if not isinstance(rs, dict):
+                raise ValueError(f"{label}: response_shape must be a mapping")
+            validate_response_shape(rs, label)
 
 
 async def load_servers(config_path: Path) -> list[dict]:

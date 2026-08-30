@@ -16,6 +16,7 @@ from ..observability import metrics
 from ..resilience import rate_limiter
 from ..resilience.circuit_breaker import CircuitOpenError, get_circuit_breaker
 from ..security import api_key_redactor, pii_redactor, prompt_injection
+from ..transform import response_shaper
 from ..transport.session import safe_exc_msg
 from ..transport.session_pool import _pool
 from .proxy_builder import build
@@ -143,11 +144,17 @@ async def call_tool(server_cfg: dict, tool_name: str, arguments: dict) -> Any:
                 raw = await pii_redactor.llm_redact(raw, pii_model)
             if server_cfg.get("injection_detection", False):
                 prompt_injection.check(raw, name)
+            shape_cfg = server_cfg.get("response_shape")
             try:
                 parsed = json.loads(raw)
                 rate_limiter.check_response(server_cfg, parsed)
+                if shape_cfg is not None:
+                    parsed = response_shaper.shape(parsed, shape_cfg)
                 return parsed
             except (json.JSONDecodeError, TypeError):
+                # Non-JSON plain text: still honour max_chars if configured.
+                if shape_cfg and shape_cfg.get("max_chars"):
+                    raw = response_shaper.truncate_text(raw, shape_cfg["max_chars"])
                 return raw
 
         if hasattr(first, "data"):

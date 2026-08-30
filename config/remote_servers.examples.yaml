@@ -152,7 +152,88 @@ servers:
       requests_per_day: 1000
 
   # ---------------------------------------------------------------------------
-  # Pattern 8: All security controls enabled
+  # Pattern 8: Response shaping — token minimization (Category A transforms)
+  # ---------------------------------------------------------------------------
+  #
+  # These transforms run after the security pipeline and before the result is
+  # returned to the LLM.  They are "proxy-safe" — they remove noise that is
+  # never semantically useful regardless of which tool or prompt is involved.
+  #
+  # Transform order (fixed):
+  #   flatten_refs → strip_fields → strip_system_fields → strip_nulls →
+  #   apply_limits → format_rows → truncate
+  #
+  # Common per-SaaS presets:
+  #
+  #   Salesforce / CRM:
+  #     strip_system_fields: true   (removes SystemModstamp, IsDeleted, etc.)
+  #     strip_nulls: true
+  #     max_rows: 50
+  #
+  #   Workday / HCM:
+  #     flatten_refs: true          (converts {descriptor: "X", id:[...]} → "X")
+  #     strip_nulls: true
+  #     max_rows: 100
+  #
+  #   GitHub / SerpAPI (search results):
+  #     strip_nulls: true
+  #     strip_system_fields: true   (removes _links, requestId, etc.)
+  #     max_rows: 20
+  #
+  #   Analytics / OHLCV (numeric data):
+  #     max_rows: 200
+  #     format: csv                 # opt-in — reduces JSON overhead for tabular data
+  #
+  - name: salesforce-crm
+    description: "Salesforce CRM with Workday-style ref flattening and noise removal"
+    url: "https://sf.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::salesforce-token"
+    response_shape:
+      flatten_refs: true
+      strip_system_fields: true     # removes SystemModstamp, IsDeleted, _links, etc.
+      strip_nulls: true
+      strip_fields:
+        - created_at
+        - updated_at
+        - deleted_at
+      max_rows: 50
+      max_chars: 8000
+    sanitize_input: true
+    sanitize_output: true
+
+  - name: workday-hcm
+    description: "Workday HCM — flatten descriptor refs and cap list sizes"
+    url: "https://wd.example.com/mcp"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://wd.example.com/oauth/token"
+      client_id: "secret::wd-client-id"
+      client_secret: "secret::wd-client-secret"
+    response_shape:
+      flatten_refs: true
+      strip_nulls: true
+      max_rows: 100
+      max_chars: 10000
+    sanitize_input: true
+    sanitize_output: false
+
+  - name: analytics-server-csv
+    description: "Analytics server — tabular data returned as CSV to cut JSON overhead"
+    url: "https://analytics.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::analytics-token"
+    response_shape:
+      strip_system_fields: true
+      strip_nulls: true
+      max_rows: 200
+      format: csv                   # converts list-of-dicts to CSV string
+      max_chars: 20000
+
+  # ---------------------------------------------------------------------------
+  # Pattern 9: All security controls enabled
   # ---------------------------------------------------------------------------
   - name: high-security-finance-server
     description: >

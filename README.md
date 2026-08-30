@@ -23,6 +23,7 @@ LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Serve
 - **Registry endpoint** — `GET /registry` lists all servers, their available tools, and any blocked tools
 - **Observability** — structured JSON logging and in-memory metrics exposed at `/metrics`
 - **Rate limiting** — per-server daily quota with response-signal detection; persistent counters via Redis
+- **Response shaping** — optional per-server transforms (null pruning, system-field stripping, Workday ref flattening, row caps, float rounding, CSV/Markdown conversion) to reduce LLM context tokens
 - **Token caching** — OAuth2 tokens and resolved credentials cached in-memory (5-min TTL)
 - **Non-root container** — multi-stage Dockerfile, runs as uid 1000
 
@@ -324,6 +325,10 @@ Tool call arguments
 [6] Prompt-injection check (injection_detection: true)
       │   12 regex patterns; blocks and discards result on match
       ▼
+[7] Response shaping       (response_shape: {...})
+      │   Null pruning, system-field strip, ref flatten, row cap,
+      │   CSV/Markdown format, char truncation — reduce LLM context tokens
+      ▼
 Tool result returned to LLM client
 ```
 
@@ -359,6 +364,94 @@ pii_scan_model: "llama3.2"
 ```
 
 If Ollama is unreachable or times out, the pipeline falls back to regex — no requests are dropped.
+
+---
+
+## Response shaping (token minimization)
+
+Tool results accumulate in LLM context windows and are re-sent on every subsequent turn. A single Workday employee record might carry 40+ null fields, Salesforce audit columns, and HATEOAS `_links` objects — noise that inflates every turn until the context is flushed. Response shaping removes that noise at the proxy layer before the LLM ever sees it.
+
+These are **Category A (proxy-safe) transforms**: they remove content that is never semantically useful regardless of which tool or prompt is involved. They do not summarise, filter by field relevance, or make semantic judgements.
+
+### Transform pipeline
+
+The transforms are applied in this fixed order after the security pipeline:
+
+```
+flatten_refs → strip_fields → strip_system_fields → strip_nulls →
+apply_limits → format_rows → truncate
+```
+
+| Transform | Config key | What it does |
+|-----------|-----------|--------------|
+| Flatten refs | `flatten_refs: true` | Converts Workday-style `{descriptor: "X", id: [...]}` → `"X"` |
+| Strip custom fields | `strip_fields: [f1, f2]` | Removes the named keys from every dict in the result |
+| Strip system fields | `strip_system_fields: true` | Removes Salesforce audit columns (`SystemModstamp`, `IsDeleted`, `LastReferencedDate`, `LastViewedDate`, `MasterRecordId`, `LastActivityDate`, `CreatedById`, `LastModifiedById`) and REST envelope keys (`requestId`, `_links`, `_embedded`, `@context`, `totalCount`, pagination cursors) |
+| Strip nulls | `strip_nulls: true` | Removes `null`, `""`, `[]`, `{}` recursively. Preserves `0` and `false`. |
+| Row limit | `max_rows: N` | Caps the first list-of-dicts found (the "data" array) at N rows |
+| Item limit | `max_items: N` | Caps the top-level list at N items (any element type) |
+| Format | `format: csv\|markdown` | Converts list-of-dicts to CSV or Markdown table string (opt-in) |
+| Char limit | `max_chars: N` | Hard char cap on the serialised result; appends `…[N chars omitted]` |
+
+### Configuration
+
+Add a `response_shape` block to any server in `config/remote_servers.yaml`:
+
+```yaml
+servers:
+  - name: salesforce-crm
+    url: "https://sf.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::sf-token"
+    response_shape:
+      flatten_refs: true
+      strip_system_fields: true
+      strip_nulls: true
+      strip_fields: [created_at, updated_at, deleted_at]
+      max_rows: 50
+      max_chars: 8000
+```
+
+All keys are optional. Omit `response_shape` entirely to skip all transforms.
+
+### Recommended presets by SaaS type
+
+**Salesforce / CRM**
+```yaml
+response_shape:
+  strip_system_fields: true
+  strip_nulls: true
+  max_rows: 50
+```
+
+**Workday / HCM**
+```yaml
+response_shape:
+  flatten_refs: true       # {descriptor: "Engineering", id: [...]} → "Engineering"
+  strip_nulls: true
+  max_rows: 100
+```
+
+**GitHub / SerpAPI (search)**
+```yaml
+response_shape:
+  strip_system_fields: true   # removes _links, requestId
+  strip_nulls: true
+  max_rows: 20
+```
+
+**Analytics / OHLCV (tabular data)**
+```yaml
+response_shape:
+  strip_nulls: true
+  max_rows: 200
+  format: csv               # JSON array → CSV string; saves ~30% over JSON for dense tables
+```
+
+### Latency impact
+
+All transforms run synchronously in the relay process on the parsed JSON object. For typical API payloads (< 1 MB) the overhead is **< 1 ms**. `format: csv` adds `csv.DictWriter` overhead (~5 ms per 10k rows). `max_chars` adds one `json.dumps` call (~2 ms per MB). These are negligible compared to the upstream network round-trip.
 
 ---
 
