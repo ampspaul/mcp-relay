@@ -1,0 +1,33 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly on Monday at 08:00 UTC to catch newly disclosed CVEs
+    - cron: "0 8 * * 1"
+
+jobs:
+  audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pip-audit and upgrade build tools
+        run: pip install --upgrade pip setuptools pip-audit
+
+      - name: Audit dependencies
+        # --skip-editable omits mcp-relay itself (local package, not on PyPI).
+        # Audits all third-party packages installed with the full extras set.
+        run: |
+          pip install -e ".[dev,redis]" --quiet
+          pip-audit --skip-editable

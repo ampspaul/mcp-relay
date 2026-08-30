@@ -1,0 +1,73 @@
+# =============================================================================
+# config/remote_servers.yaml — MCP Relay remote server configuration
+# =============================================================================
+#
+# USAGE:
+#   Fill in your real server URLs and secret references below.
+#   This file is git-ignored — never commit secrets.
+#
+# SECRET REFERENCES:
+#   Use  secret::<name>  anywhere a credential value is expected.
+#   The relay resolves references at startup via the SECRET_BACKEND env var.
+#
+#   Examples:
+#     value: "secret::my-api-key"     # env var MY_API_KEY (default backend)
+#     value: "secret::github-pat"     # env var GITHUB_PAT
+#
+#   Backends (set SECRET_BACKEND env var):
+#     env    — environment variable, uppercased + hyphens→underscores (default)
+#     gcp    — GCP Secret Manager        (pip install mcp-relay[gcp])
+#     aws    — AWS Secrets Manager       (pip install mcp-relay[aws])
+#     azure  — Azure Key Vault           (pip install mcp-relay[azure])
+#     vault  — HashiCorp Vault           (pip install mcp-relay[vault])
+#     plain  — value used as-is          (testing only — never use in production)
+#
+# AUTHENTICATION TYPES:
+#   none                     — public server, no credentials
+#   api_key_query            — appends ?<param_name>=<value> to the URL
+#   api_key_url_path         — substitutes {placeholder} in the URL path
+#   api_key_header           — sends a custom HTTP header
+#   bearer                   — sends Authorization: Bearer <value>
+#   oauth2_client_credentials — fetches and caches a token from token_url
+#
+# See config/remote_servers.examples.yaml for all auth pattern examples.
+# =============================================================================
+
+servers:
+
+  - name: alpha_vantage
+    display_name: "Alpha Vantage Financial Data"
+    url: "https://mcp.alphavantage.co/mcp"
+    transport: streamable_http
+    auth:
+      type: api_key_query
+      param_name: apikey
+      value: "secret::alpha-vantage-api-key"
+    tool_prefix: ""
+    enabled: true
+    sanitize_output: true
+    redact_pii: true
+    sanitize_input: false
+    injection_detection: false
+    pii_scan_enabled: false
+    pii_scan_model: "llama3.2"
+    rate_limit:
+      requests_per_day: 25
+      response_signal_keys: ["Note", "Information"]
+    description: >
+      Real-time quotes, historical OHLCV, technical indicators (RSI, MACD),
+      company fundamentals, earnings history, and symbol search.
+
+# =============================================================================
+# NOTES
+# =============================================================================
+#
+# 1. name must be unique — it becomes the MCP tool namespace.
+#
+# 2. Secret references are resolved once at startup. If a secret cannot be
+#    found, the relay refuses to start.
+#
+# 3. tool_prefix can be added to any server to namespace its tools:
+#      tool_prefix: "finance_"
+#    Tools will be registered as  finance_<tool_name>.
+# =============================================================================

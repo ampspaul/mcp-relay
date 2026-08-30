@@ -1,0 +1,256 @@
+# =============================================================================
+# config/remote_servers.examples.yaml — Example server configurations
+# =============================================================================
+#
+# This file is for reference only — it is NOT loaded by the relay.
+# Copy entries into remote_servers.yaml to activate them.
+# =============================================================================
+
+servers:
+
+  # ---------------------------------------------------------------------------
+  # Pattern 1: No authentication — public server
+  # ---------------------------------------------------------------------------
+  - name: public-weather-server
+    description: "Public weather MCP server — no credentials required"
+    url: "https://weather.example.com/mcp"
+    transport: sse
+    enabled: true
+    auth:
+      type: none
+    # Per-server tool blocklist — blocks these tools from this server only.
+    # Use security_policies.yaml tool_blocklist to block tools across ALL servers.
+    tool_blocklist:
+      - experimental_feature
+      - internal_debug_tool
+    sanitize_input: true
+    sanitize_output: true
+    redact_pii: false
+    pii_scan_enabled: false
+    injection_detection: false
+    rate_limit:
+      requests_per_day: 500
+
+  # ---------------------------------------------------------------------------
+  # Pattern 2: API key passed as a query parameter
+  # ---------------------------------------------------------------------------
+  - name: maps-server-query-param
+    description: "Mapping service that expects ?api_key=<TOKEN> in the URL"
+    url: "https://maps.example.com/mcp"
+    auth:
+      type: api_key_query
+      param_name: api_key
+      value: "secret::maps-api-key"
+    sanitize_input: true
+    sanitize_output: false
+    redact_pii: false
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit:
+      requests_per_day: 1000
+
+  # ---------------------------------------------------------------------------
+  # Pattern 3: API key embedded in the URL path
+  # ---------------------------------------------------------------------------
+  - name: translation-server-path-key
+    description: "Translation service with the API key baked into the URL path"
+    url: "https://translate.example.com/{api_key}/mcp"
+    auth:
+      type: api_key_url_path
+      placeholder: "{api_key}"
+      value: "secret::translate-api-key"
+    sanitize_input: true
+    sanitize_output: true
+    redact_pii: true
+    pii_scan_enabled: false
+    injection_detection: false
+    rate_limit:
+      requests_per_day: 0
+
+  # ---------------------------------------------------------------------------
+  # Pattern 4: API key sent as a custom HTTP header
+  # ---------------------------------------------------------------------------
+  - name: search-server-header-key
+    description: "Enterprise search MCP server using a custom X-API-Key header"
+    url: "https://search.example.com/mcp"
+    auth:
+      type: api_key_header
+      header_name: "X-API-Key"
+      value: "secret::search-api-key"
+    sanitize_input: true
+    sanitize_output: true
+    redact_pii: false
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit:
+      requests_per_day: 2000
+
+  # ---------------------------------------------------------------------------
+  # Pattern 5: Bearer token in the Authorization header
+  # ---------------------------------------------------------------------------
+  - name: github-mcp-server
+    description: "GitHub MCP server authenticated with a Personal Access Token"
+    url: "https://api.github.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::github-pat"
+    sanitize_input: true
+    sanitize_output: false
+    redact_pii: false
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit:
+      requests_per_day: 200
+
+  # ---------------------------------------------------------------------------
+  # Pattern 6: OAuth2 client credentials flow
+  # ---------------------------------------------------------------------------
+  - name: enterprise-erp-server
+    description: >
+      ERP system using OAuth2 client credentials grant.
+      The relay fetches and caches a Bearer token automatically,
+      refreshing it before expiry.
+    url: "https://erp.example.com/mcp"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://auth.example.com/oauth/token"
+      client_id: "secret::erp-client-id"
+      client_secret: "secret::erp-client-secret"
+      scope: "mcp.read mcp.write"
+      audience: "https://erp.example.com"
+    sanitize_input: true
+    sanitize_output: true
+    redact_pii: true
+    pii_scan_enabled: false
+    injection_detection: true
+    rate_limit:
+      requests_per_day: 500
+
+  # ---------------------------------------------------------------------------
+  # Pattern 7: Per-call timeout and circuit breaker overrides
+  # ---------------------------------------------------------------------------
+  - name: slow-analytics-server
+    description: >
+      Analytics MCP server with longer timeout budget and a tighter circuit
+      breaker — trips after 3 consecutive failures and probes after 30s.
+    url: "https://analytics.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::analytics-token"
+    # Allow up to 60s per call (global default is 30s).
+    tool_call_timeout_seconds: 60
+    # Per-server circuit breaker — overrides the global defaults from
+    # security_policies.yaml for this server only.
+    circuit_breaker:
+      failure_threshold: 3         # open after 3 consecutive failures
+      recovery_timeout_seconds: 30 # probe again after 30s in OPEN state
+      success_threshold: 2         # need 2 successful probes to close
+    sanitize_input: true
+    sanitize_output: false
+    injection_detection: false
+    rate_limit:
+      requests_per_day: 1000
+
+  # ---------------------------------------------------------------------------
+  # Pattern 8: Response shaping — token minimization (Category A transforms)
+  # ---------------------------------------------------------------------------
+  #
+  # These transforms run after the security pipeline and before the result is
+  # returned to the LLM.  They are "proxy-safe" — they remove noise that is
+  # never semantically useful regardless of which tool or prompt is involved.
+  #
+  # Transform order (fixed):
+  #   flatten_refs → strip_fields → strip_system_fields → strip_nulls →
+  #   apply_limits → format_rows → truncate
+  #
+  # Common per-SaaS presets:
+  #
+  #   Salesforce / CRM:
+  #     strip_system_fields: true   (removes SystemModstamp, IsDeleted, etc.)
+  #     strip_nulls: true
+  #     max_rows: 50
+  #
+  #   Workday / HCM:
+  #     flatten_refs: true          (converts {descriptor: "X", id:[...]} → "X")
+  #     strip_nulls: true
+  #     max_rows: 100
+  #
+  #   GitHub / SerpAPI (search results):
+  #     strip_nulls: true
+  #     strip_system_fields: true   (removes _links, requestId, etc.)
+  #     max_rows: 20
+  #
+  #   Analytics / OHLCV (numeric data):
+  #     max_rows: 200
+  #     format: csv                 # opt-in — reduces JSON overhead for tabular data
+  #
+  - name: salesforce-crm
+    description: "Salesforce CRM with Workday-style ref flattening and noise removal"
+    url: "https://sf.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::salesforce-token"
+    response_shape:
+      flatten_refs: true
+      strip_system_fields: true     # removes SystemModstamp, IsDeleted, _links, etc.
+      strip_nulls: true
+      strip_fields:
+        - created_at
+        - updated_at
+        - deleted_at
+      max_rows: 50
+      max_chars: 8000
+    sanitize_input: true
+    sanitize_output: true
+
+  - name: workday-hcm
+    description: "Workday HCM — flatten descriptor refs and cap list sizes"
+    url: "https://wd.example.com/mcp"
+    auth:
+      type: oauth2_client_credentials
+      token_url: "https://wd.example.com/oauth/token"
+      client_id: "secret::wd-client-id"
+      client_secret: "secret::wd-client-secret"
+    response_shape:
+      flatten_refs: true
+      strip_nulls: true
+      max_rows: 100
+      max_chars: 10000
+    sanitize_input: true
+    sanitize_output: false
+
+  - name: analytics-server-csv
+    description: "Analytics server — tabular data returned as CSV to cut JSON overhead"
+    url: "https://analytics.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::analytics-token"
+    response_shape:
+      strip_system_fields: true
+      strip_nulls: true
+      max_rows: 200
+      format: csv                   # converts list-of-dicts to CSV string
+      max_chars: 20000
+
+  # ---------------------------------------------------------------------------
+  # Pattern 9: All security controls enabled
+  # ---------------------------------------------------------------------------
+  - name: high-security-finance-server
+    description: >
+      High-security financial data MCP server.
+      All protection flags enabled simultaneously.
+    url: "https://finance.example.com/mcp"
+    auth:
+      type: bearer
+      value: "secret::finance-bearer-token"
+    sanitize_input: true
+    sanitize_output: true
+    redact_pii: true
+    pii_scan_enabled: true
+    pii_scan_model: "llama3.2"
+    injection_detection: true
+    rate_limit:
+      requests_per_day: 100
+      response_signal_keys:
+        - "Note"
+        - "Information"
