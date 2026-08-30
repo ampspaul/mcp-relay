@@ -648,7 +648,14 @@ Only safe fields are returned — `headers`, `auth`, and other internal config a
 
 ## Persistent state (Redis)
 
-By default rate limit counters are stored in-process memory and reset on restart. For multi-instance deployments or persistent quotas, switch to the Redis backend:
+By default rate limit counters are stored in-process memory and reset on restart.
+
+| `STATE_BACKEND` | Behaviour |
+|-----------------|-----------|
+| `memory` (default) | In-process dict — zero deps, resets on restart, single container only |
+| `redis` | Atomic Redis counters — persists across restarts, accurate across multiple containers |
+
+> **Multi-container deployments must use Redis.** With the memory backend each container maintains its own independent counter. Three containers with a limit of 1,000 requests/day effectively allow 3,000 — the quota is meaningless. Redis `INCR` is atomic and the counter is shared, so the limit is enforced correctly regardless of how many replicas are running.
 
 ```bash
 pip3 install mcp-relay[redis]
@@ -657,15 +664,51 @@ pip3 install mcp-relay[redis]
 ```bash
 # .env
 export STATE_BACKEND=redis
-export REDIS_URL=redis://localhost:6379
+export REDIS_URL=redis://your-redis:6379
 ```
 
-| `STATE_BACKEND` | Behaviour |
-|-----------------|-----------|
-| `memory` (default) | In-process dict — zero deps, resets on restart, single instance only |
-| `redis` | Atomic Redis counters — persists across restarts, safe across multiple instances |
-
 Rate limit keys are namespaced as `mcp_relay:ratelimit:{server}:{date}` and automatically expire at midnight so daily quotas reset without any manual intervention.
+
+---
+
+## Horizontal scaling
+
+The relay is designed to scale horizontally. Run as many replicas as needed with the following configuration:
+
+### Requirements
+
+**Redis is required for accurate rate limiting** (see above). Everything else works correctly at any replica count without coordination.
+
+**Run one uvicorn worker per container** and scale via replica count, not `--workers`. The circuit breaker holds state in-process — bumping workers inside a container multiplies the number of independent breakers without the replica visibility that a load balancer provides.
+
+```bash
+# Correct — one worker, many replicas
+docker run mcp-relay   # CMD in Dockerfile already uses single-process mode
+# Scale: increase replica count in your orchestrator
+
+# Incorrect — multiple workers per container
+# uvicorn ... --workers 4   ← each worker gets its own circuit breaker state
+```
+
+### What is shared across replicas
+
+| Component | Shared? | Notes |
+|---|---|---|
+| Rate limit counters | Yes (with Redis) | Atomic `INCR` — accurate across all replicas |
+| Inbound bearer auth | Yes | Stateless token check — no coordination needed |
+| Config / tool registry | Yes | All replicas read the same mounted config at startup |
+| Security pipeline | Yes | Fully stateless |
+| Secret resolution | Yes | Each replica fetches on cache miss; cloud backends are the source of truth |
+
+### What is per-replica
+
+| Component | Per-replica? | Impact |
+|---|---|---|
+| Circuit breaker state | Yes | A failing upstream absorbs up to `N × failure_threshold` calls before all replicas stop. Documented tradeoff — see `config/security_policies.yaml`. |
+| MCP session pool | Yes | Each replica holds its own persistent connections to upstreams. Independent pools are correct behavior, not shared state. |
+| OAuth2 / credential cache | Yes | Each replica may fetch a token independently on cold start. Slightly wasteful but correct — tokens are stateless and reusable. |
+| `/metrics` counters | Yes | Each replica's `/metrics` is a partial view. Scrape all instances in your metrics platform and aggregate. |
+| Tool refresh loop | Yes | Each replica opens its own sessions per cycle. Keep `tool_refresh_interval_seconds` conservative (≥300) or disabled when running many replicas. |
 
 ---
 
@@ -785,13 +828,34 @@ docker tag mcp-relay gcr.io/YOUR_PROJECT/mcp-relay:v1
 docker push gcr.io/YOUR_PROJECT/mcp-relay:v1
 ```
 
+Cloud Run terminates TLS automatically. For horizontal scaling set `--min-instances` and `--max-instances` and point `REDIS_URL` at a Cloud Memorystore instance:
+
+```bash
+gcloud run deploy mcp-relay \
+  --image gcr.io/YOUR_PROJECT/mcp-relay:v1 \
+  --set-env-vars SECRET_BACKEND=gcp,GCP_PROJECT_ID=YOUR_PROJECT \
+  --set-env-vars STATE_BACKEND=redis,REDIS_URL=redis://MEMORYSTORE_IP:6379 \
+  --min-instances 1 --max-instances 10
+```
+
 ### AWS ECS / Fargate
 
 ```bash
 make docker-build
 docker tag mcp-relay YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
 docker push YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
-# Deploy via ECS task definition with SECRET_BACKEND=aws
+```
+
+Deploy via ECS task definition. For horizontal scaling set `desiredCount > 1` and point `REDIS_URL` at an ElastiCache instance:
+
+```json
+{
+  "environment": [
+    {"name": "SECRET_BACKEND", "value": "aws"},
+    {"name": "STATE_BACKEND",  "value": "redis"},
+    {"name": "REDIS_URL",      "value": "redis://YOUR_ELASTICACHE:6379"}
+  ]
+}
 ```
 
 ### Azure Container Apps
@@ -800,9 +864,15 @@ docker push YOUR_ACCOUNT.dkr.ecr.REGION.amazonaws.com/mcp-relay:v1
 az acr build --registry YOUR_ACR --image mcp-relay:v1 .
 az containerapp create \
   --name mcp-relay \
-  --env-vars SECRET_BACKEND=azure AZURE_KEYVAULT_URL=https://... \
+  --env-vars SECRET_BACKEND=azure \
+             AZURE_KEYVAULT_URL=https://YOUR_VAULT.vault.azure.net \
+             STATE_BACKEND=redis \
+             REDIS_URL=redis://YOUR_AZURE_CACHE:6379 \
+  --min-replicas 1 --max-replicas 10 \
   --image YOUR_ACR.azurecr.io/mcp-relay:v1
 ```
+
+Container Apps terminates TLS and load-balances across replicas automatically.
 
 ---
 
