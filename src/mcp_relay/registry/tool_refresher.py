@@ -65,9 +65,9 @@ async def _refresh_once(mcp: Any) -> None:
                 proxy_fn = build(cfg, tool.name, schema, call_tool)
                 proxy_fn.__name__ = proxy_name
                 proxy_fn.__qualname__ = proxy_name
-                if await mcp.local_provider.get_tool(proxy_name) is None:
+                if await mcp._local._get_tool(proxy_name) is None:  # noqa: SLF001
                     proxy_fn.__doc__ = tool.description or ""
-                    mcp.local_provider.add_tool(proxy_fn)
+                    mcp.add_tool(proxy_fn)
                     _tool_metadata[proxy_name] = {
                         "description": tool.description or "",
                         "parameters": _parse_parameters(schema),
@@ -80,7 +80,7 @@ async def _refresh_once(mcp: Any) -> None:
         stale = current - set(available.keys())
         for proxy_name in stale:
             try:
-                mcp.local_provider.remove_tool(proxy_name)
+                mcp._local.remove_tool(proxy_name)  # noqa: SLF001
             except KeyError:
                 pass
             _tool_metadata.pop(proxy_name, None)

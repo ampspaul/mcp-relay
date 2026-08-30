@@ -98,13 +98,12 @@ async def test_discover_returns_empty_list_on_empty_server():
 
 def _mcp_mock():
     mcp = MagicMock()
-    mcp.local_provider = MagicMock()
-    mcp.local_provider.add_tool = MagicMock()
+    mcp.add_tool = MagicMock()
     return mcp
 
 
 def _registered_names(mcp) -> set[str]:
-    return {call.args[0].__name__ for call in mcp.local_provider.add_tool.call_args_list}
+    return {call.args[0].__name__ for call in mcp.add_tool.call_args_list}
 
 
 _EMPTY_POLICIES = AsyncMock(return_value={})
@@ -126,7 +125,7 @@ async def test_register_all_adds_tools_to_mcp():
         count = await register_all(mcp)
 
     assert count == 2
-    assert mcp.local_provider.add_tool.call_count == 2
+    assert mcp.add_tool.call_count == 2
     assert _registered_names(mcp) == {"weather_current", "weather_forecast"}
 
 
@@ -173,7 +172,7 @@ async def test_register_all_skips_disabled_servers():
         count = await register_all(mcp)
 
     assert count == 1
-    assert mcp.local_provider.add_tool.call_count == 1
+    assert mcp.add_tool.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -200,7 +199,7 @@ async def test_register_all_skips_colliding_tool_names():
 
     # Only the first "query" is registered; the second is skipped
     assert count == 1
-    assert mcp.local_provider.add_tool.call_count == 1
+    assert mcp.add_tool.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -232,7 +231,7 @@ async def test_register_all_returns_zero_with_no_servers():
         count = await register_all(mcp)
 
     assert count == 0
-    mcp.local_provider.add_tool.assert_not_called()
+    mcp.add_tool.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -250,7 +249,7 @@ async def test_register_all_tool_description_forwarded():
 
         await register_all(mcp)
 
-    registered_fn = mcp.local_provider.add_tool.call_args.args[0]
+    registered_fn = mcp.add_tool.call_args.args[0]
     assert registered_fn.__doc__ == "Does the thing"
 
 
