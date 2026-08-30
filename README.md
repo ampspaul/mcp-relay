@@ -1,6 +1,6 @@
 # mcp-relay
 
-A config-driven MCP gateway that proxies tool calls to remote MCP servers with built-in authentication, secret resolution, and a layered security pipeline.
+A config driven MCP gateway that proxies tool calls to remote MCP servers with built-in authentication, secret resolution, and a layered security pipeline.
 
 ```
 LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Server A
