@@ -21,7 +21,7 @@ _EXEMPT = {"/health"}
 class BearerAuthMiddleware(BaseHTTPMiddleware):
     """Reject requests that do not carry a valid Bearer token.
 
-    Skips /health and /metrics so load-balancer probes always succeed.
+    Skips /health so load-balancer probes always succeed.
     Tokens are resolved at startup and passed in as a plain set of strings.
     """
 

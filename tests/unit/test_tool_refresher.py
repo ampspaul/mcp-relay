@@ -25,6 +25,8 @@ class _FakeMCP:
     def __init__(self):
         self._tool_manager = MagicMock()
         self._tool_manager._tools = {}
+        # Mirror real ToolManager.get_tool(): return None when not present
+        self._tool_manager.get_tool = lambda name: self._tool_manager._tools.get(name)
         self._added: list[str] = []
 
     def add_tool(self, fn, *, name, description=""):

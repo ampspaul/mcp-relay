@@ -1,1 +1,1 @@
-"""HTTP API endpoints — health, admin, and data APIs."""
+"""HTTP API endpoints — health, metrics, and registry."""

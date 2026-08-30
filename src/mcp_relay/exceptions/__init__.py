@@ -1,1 +1,1 @@
-"""Exception handling — standardized error responses for the gateway."""
+"""Exception types for the gateway."""

@@ -1,1 +1,1 @@
-"""MCP transport layer — SSE and StreamableHTTP session management."""
+"""MCP transport layer — session and pool management for SSE and StreamableHTTP."""
