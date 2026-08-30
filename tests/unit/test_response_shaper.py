@@ -18,7 +18,6 @@ from src.mcp_relay.transform.response_shaper import (
     validate_response_shape,
 )
 
-
 # ---------------------------------------------------------------------------
 # _is_ref_object
 # ---------------------------------------------------------------------------
@@ -302,10 +301,7 @@ def test_truncate_cuts_long_string():
 
 
 def test_truncate_serialises_dict():
-    import json
-
     obj = {"key": "value"}
-    full = json.dumps(obj, ensure_ascii=False)
     result = _truncate(obj, 5)
     assert isinstance(result, str)
     assert len(result) > 5  # includes omission annotation

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import textwrap
-from pathlib import Path
 
 import pytest
 
 from src.mcp_relay.config.loader import load_security_policies, load_servers, validate_servers
-
 
 # ---------------------------------------------------------------------------
 # validate_servers — required fields
@@ -76,9 +74,7 @@ def test_validate_invalid_transport_raises():
 
 
 def test_validate_auth_none_is_valid():
-    validate_servers(
-        [{"name": "srv", "url": "https://example.com/mcp", "auth": {"type": "none"}}]
-    )
+    validate_servers([{"name": "srv", "url": "https://example.com/mcp", "auth": {"type": "none"}}])
 
 
 def test_validate_auth_bearer_requires_value():
@@ -290,7 +286,9 @@ def test_validate_response_shape_unknown_key_raises():
 
 def test_validate_error_label_includes_server_name():
     with pytest.raises(ValueError, match="my-server"):
-        validate_servers([{"name": "my-server", "url": "https://example.com/mcp", "transport": "bad"}])
+        validate_servers(
+            [{"name": "my-server", "url": "https://example.com/mcp", "transport": "bad"}]
+        )
 
 
 # ---------------------------------------------------------------------------

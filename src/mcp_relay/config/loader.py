@@ -53,24 +53,19 @@ def validate_servers(servers: list[dict]) -> None:
 
         if auth_type in {"api_key_query", "api_key_url_path", "api_key_header", "bearer"}:
             if auth.get("value") is None:
-                raise ValueError(
-                    f"{label}: auth.type={auth_type!r} requires 'auth.value'"
-                )
+                raise ValueError(f"{label}: auth.type={auth_type!r} requires 'auth.value'")
 
         if auth_type == "oauth2_client_credentials":
             missing = _OAUTH2_REQUIRED - set(auth)
             if missing:
                 raise ValueError(
-                    f"{label}: auth.type='oauth2_client_credentials' requires "
-                    f"{sorted(missing)}"
+                    f"{label}: auth.type='oauth2_client_credentials' requires {sorted(missing)}"
                 )
 
         rl = srv.get("rate_limit") or {}
         rpd = rl.get("requests_per_day")
         if rpd is not None and (not isinstance(rpd, int) or rpd < 0):
-            raise ValueError(
-                f"{label}: rate_limit.requests_per_day must be a non-negative integer"
-            )
+            raise ValueError(f"{label}: rate_limit.requests_per_day must be a non-negative integer")
 
         rs = srv.get("response_shape")
         if rs is not None:

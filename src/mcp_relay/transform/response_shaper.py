@@ -137,7 +137,6 @@ def _strip_nulls(obj: Any) -> Any:
     return obj
 
 
-
 def _apply_limits(obj: Any, max_rows: int | None, max_items: int | None) -> Any:
     """Cap list lengths.
 
@@ -181,9 +180,7 @@ def _to_markdown(rows: list[dict]) -> str:
     fieldnames = list(dict.fromkeys(k for row in rows for k in row))
     header = "| " + " | ".join(str(f) for f in fieldnames) + " |"
     sep = "| " + " | ".join("---" for _ in fieldnames) + " |"
-    body_lines = [
-        "| " + " | ".join(str(row.get(f, "")) for f in fieldnames) + " |" for row in rows
-    ]
+    body_lines = ["| " + " | ".join(str(row.get(f, "")) for f in fieldnames) + " |" for row in rows]
     return "\n".join([header, sep] + body_lines)
 
 
@@ -262,9 +259,7 @@ def validate_response_shape(cfg: dict, label: str) -> None:
 
     fmt = cfg.get("format")
     if fmt is not None and fmt not in _VALID_FORMATS:
-        raise ValueError(
-            f"{label}: response_shape.format must be one of {sorted(_VALID_FORMATS)}"
-        )
+        raise ValueError(f"{label}: response_shape.format must be one of {sorted(_VALID_FORMATS)}")
 
 
 def truncate_text(text: str, max_chars: int) -> str:

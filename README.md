@@ -23,7 +23,7 @@ LLM client  ──SSE──►  mcp-relay  ──HTTP──►  Remote MCP Serve
 - **Registry endpoint** — `GET /registry` lists all servers, their available tools, and any blocked tools
 - **Observability** — structured JSON logging and in-memory metrics exposed at `/metrics`
 - **Rate limiting** — per-server daily quota with response-signal detection; persistent counters via Redis
-- **Response shaping** — optional per-server transforms (null pruning, system-field stripping, Workday ref flattening, row caps, float rounding, CSV/Markdown conversion) to reduce LLM context tokens
+- **Response shaping** — optional per-server transforms (null pruning, system-field stripping, Workday ref flattening, row caps, CSV/Markdown conversion, char truncation) to reduce LLM context tokens
 - **Token caching** — OAuth2 tokens and resolved credentials cached in-memory (5-min TTL)
 - **Non-root container** — multi-stage Dockerfile, runs as uid 1000
 
