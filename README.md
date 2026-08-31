@@ -156,6 +156,148 @@ The SSE endpoint your LLM client connects to is `http://localhost:8080/sse`.
 
 ---
 
+## Quick Setup — Connect to Claude Code, Claude Desktop, or Cursor
+
+### Step 1 — Start the relay
+
+```bash
+cd /path/to/mcp-relay
+source .env
+python3 -m mcp_relay.main
+```
+
+Confirm it is running:
+
+```bash
+curl http://localhost:8080/health
+# {"status": "ok", ...}
+```
+
+---
+
+### Claude Code
+
+```bash
+# Add the relay as an MCP server
+claude mcp add mcp-relay --transport sse http://localhost:8080/sse
+
+# Verify
+claude mcp list
+
+# Start a NEW session — tools load at startup
+claude
+```
+
+To remove it later:
+
+```bash
+claude mcp remove mcp-relay
+```
+
+---
+
+### Claude Desktop
+
+Open the Claude configuration directory:
+
+```bash
+open ~/Library/Application\ Support/Claude/
+```
+
+Add this to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mcp-relay": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse"
+    }
+  }
+}
+```
+
+Restart Claude Desktop — MCP tools load at startup.
+
+To verify, ask Claude:
+> "What MCP tools do you have access to?"
+
+---
+
+### Cursor
+
+Edit `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-level):
+
+```json
+{
+  "mcpServers": {
+    "mcp-relay": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse"
+    }
+  }
+}
+```
+
+Restart Cursor → Settings → MCP → `mcp-relay` will be listed with all tools.
+
+---
+
+### With Bearer Authentication
+
+If you enable Bearer auth in `config/security_policies.yaml`, pass the token when connecting.
+
+**Claude Code:**
+
+```bash
+claude mcp add mcp-relay \
+  --transport sse http://localhost:8080/sse \
+  --header "Authorization: Bearer your-token"
+```
+
+**Claude Desktop / Cursor:**
+
+```json
+{
+  "mcpServers": {
+    "mcp-relay": {
+      "type": "sse",
+      "url": "http://localhost:8080/sse",
+      "headers": {
+        "Authorization": "Bearer your-token"
+      }
+    }
+  }
+}
+```
+
+---
+
+### Running in the cloud
+
+Once deployed to GCP, AWS, or Azure, replace `http://localhost:8080` with your deployed endpoint:
+
+```
+https://mcp-relay-xxxx-uc.a.run.app
+```
+
+The basic flow:
+
+```
+Claude Code / Claude Desktop / Cursor
+              ↓
+         mcp-relay
+   Auth · Policies · Sanitization
+   PII protection · Rate limits
+   Circuit breaker · Observability
+              ↓
+    Upstream MCP Servers
+              ↓
+  APIs / Tools / Enterprise Systems
+```
+
+---
+
 ## config/remote_servers.yaml reference
 
 `config/remote_servers.yaml` is git-ignored — never commit secrets. The file
